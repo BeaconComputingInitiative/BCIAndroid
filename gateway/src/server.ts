@@ -1,3 +1,4 @@
+#!/usr/bin/env bun
 /*
  * BEACON COMPUTING INITIATIVE
  * BCIAndroid Live Gateway
@@ -5,7 +6,6 @@
  * Integrity: SHA-256 emitted by gateway CI for each committed revision.
  */
 
-#!/usr/bin/env bun
 import { Database } from "bun:sqlite";
 import { timingSafeEqual } from "node:crypto";
 import { mkdirSync } from "node:fs";
