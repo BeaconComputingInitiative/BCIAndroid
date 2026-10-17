@@ -182,8 +182,6 @@ class AudioMonitorService : Service() {
                 stopMonitoring()
 
             ACTION_GO_LIVE -> {
-                startMonitoring()
-
                 val token =
                     publisherCredentials
                         .read()
@@ -193,6 +191,18 @@ class AudioMonitorService : Service() {
                     require(token.isNotBlank()) {
                         "Publisher credential is not configured"
                     }
+
+                    inputSource =
+                        intent.getStringExtra(
+                            EXTRA_INPUT_SOURCE
+                        )
+                            ?.takeIf {
+                                it == INPUT_SOURCE_PHONE ||
+                                    it == INPUT_SOURCE_BLUETOOTH
+                            }
+                            ?: inputSource
+
+                    startMonitoring()
 
                     publisher.start(
                         BroadcastConfig.PUBLISH_URL,
