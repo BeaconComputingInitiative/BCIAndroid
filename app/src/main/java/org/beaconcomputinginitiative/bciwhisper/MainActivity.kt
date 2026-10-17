@@ -433,9 +433,14 @@ class MainActivity : Activity() {
             Intent(
                 this,
                 AudioMonitorService::class.java
-            ).setAction(
-                AudioMonitorService.ACTION_GO_LIVE
             )
+                .setAction(
+                    AudioMonitorService.ACTION_GO_LIVE
+                )
+                .putExtra(
+                    AudioMonitorService.EXTRA_INPUT_SOURCE,
+                    selectedInputSource()
+                )
         )
 
         bindAudioService()
