@@ -1,3 +1,10 @@
+/*
+ * BEACON COMPUTING INITIATIVE
+ * BCIAndroid Broadcast Publisher
+ * Developer Seal: CJB-DEV-2026
+ * Integrity: SHA-256 emitted by Android CI for each committed revision.
+ */
+
 package org.beaconcomputinginitiative.bciwhisper.broadcast
 
 import okhttp3.OkHttpClient
@@ -121,7 +128,7 @@ class BroadcastPublisher {
         val request = Request.Builder()
             .url(url)
             .header("Authorization", "Bearer $token")
-            .header("X-BCI-Publisher-ID", "bciwhisper-android")
+            .header("X-BCI-Publisher-ID", BroadcastConfig.PUBLISHER_ID)
             .build()
 
         socket = client.newWebSocket(
@@ -130,7 +137,7 @@ class BroadcastPublisher {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
                     lastError = null
                     webSocket.send(
-                        """{"type":"hello","protocol":"bci-broadcast-v1","codec":"pcm_s16le","sampleRate":44100,"channels":1,"bitrateKbps":128}"""
+                        """{"type":"hello","protocol":"${BroadcastConfig.PROTOCOL}","codec":"${BroadcastConfig.INPUT_CODEC}","sampleRate":${BroadcastConfig.SAMPLE_RATE},"channels":${BroadcastConfig.CHANNELS},"bitrateKbps":${BroadcastConfig.BITRATE_KBPS}}"""
                     )
                 }
 
