@@ -113,16 +113,16 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          cp app/build/outputs/apk/debug/app-debug.apk             out/BCIWhisper-v6.0-Android-alpha10-debug.apk
+          cp app/build/outputs/apk/debug/app-debug.apk             out/BCIWhisper-v6.0-Android-alpha11-debug.apk
           (
             cd out
-            sha256sum BCIWhisper-v6.0-Android-alpha10-debug.apk               > BCIWhisper-v6.0-Android-alpha10-debug.apk.sha256
+            sha256sum BCIWhisper-v6.0-Android-alpha11-debug.apk               > BCIWhisper-v6.0-Android-alpha11-debug.apk.sha256
           )
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: BCIWhisper-Android-alpha10
+          name: BCIWhisper-Android-alpha11
           path: out/*
           if-no-files-found: error
           retention-days: 14

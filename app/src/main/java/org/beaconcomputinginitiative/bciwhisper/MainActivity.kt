@@ -108,6 +108,9 @@ class MainActivity : Activity() {
     @Volatile private var transcriptionBusy = false
     @Volatile private var masteringBusy = false
 
+    @Volatile
+    private var heavyComputeOwner: String? = null
+
     private var currentScreen = Screen.MONITOR
 
     private val connection = object : ServiceConnection {
@@ -461,7 +464,7 @@ class MainActivity : Activity() {
 
         header.addView(
             TextView(this).apply {
-                text = "ANDROID • v6.0 • ALPHA 10"
+                text = "ANDROID • v6.0 • ALPHA 11"
                 textSize = 10f
                 setTextColor(muted)
                 typeface = uiTypeface
@@ -1278,6 +1281,16 @@ class MainActivity : Activity() {
 
     private fun startMastering(source: java.io.File) {
         if (masteringBusy) return
+
+        if (!acquireHeavyCompute("mastering")) {
+            Toast.makeText(
+                this,
+                "Finish the current mastering/transcription job first. Monitoring continues independently.",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+
         masteringBusy = true
 
         Toast.makeText(
@@ -1293,6 +1306,9 @@ class MainActivity : Activity() {
 
             runOnUiThread {
                 masteringBusy = false
+                releaseHeavyCompute(
+                    "mastering"
+                )
 
                 result.onSuccess {
                     Toast.makeText(
@@ -1315,7 +1331,10 @@ class MainActivity : Activity() {
                     ).show()
                 }
             }
-        }, "BCI-MobileMastering").start()
+        }, "BCI-MobileMastering").apply {
+            priority =
+                Thread.MIN_PRIORITY
+        }.start()
     }
 
     private fun buildMasteringScreen(): ScrollView {
@@ -1430,26 +1449,75 @@ class MainActivity : Activity() {
 
     private fun startTranscription(source: java.io.File) {
         if (transcriptionBusy) return
+
+        if (!acquireHeavyCompute("transcription")) {
+            Toast.makeText(
+                this,
+                "Finish the current mastering/transcription job first. Monitoring continues independently.",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+
         transcriptionBusy = true
+
+        val snapshot =
+            audioService?.snapshot()
+
+        val resourceMode =
+            when {
+                snapshot?.recordingActive == true ||
+                    snapshot?.broadcastState ==
+                    BroadcastPublisher.State.LIVE ->
+                    TranscriptionEngine.ResourceMode.CAPTURE_CRITICAL
+
+                snapshot?.running == true ->
+                    TranscriptionEngine.ResourceMode.MONITORING
+
+                else ->
+                    TranscriptionEngine.ResourceMode.IDLE
+            }
+
         Toast.makeText(
             this,
-            "Transcribing locally with whisper.cpp…",
+            when (resourceMode) {
+                TranscriptionEngine.ResourceMode.CAPTURE_CRITICAL ->
+                    "Transcribing in capture-safe mode…"
+
+                TranscriptionEngine.ResourceMode.MONITORING ->
+                    "Transcribing with monitoring headroom…"
+
+                TranscriptionEngine.ResourceMode.IDLE ->
+                    "Transcribing locally with whisper.cpp…"
+            },
             Toast.LENGTH_SHORT
         ).show()
 
         Thread({
-            val result = runCatching {
-                transcriptionEngine.transcribe(source)
-            }
+            val result =
+                runCatching {
+                    transcriptionEngine.transcribe(
+                        source,
+                        resourceMode
+                    )
+                }
+
             runOnUiThread {
                 transcriptionBusy = false
+                releaseHeavyCompute(
+                    "transcription"
+                )
+
                 result.onSuccess {
                     Toast.makeText(
                         this,
-                        "Transcript saved: ${it.transcript.name}",
+                        "Transcript saved: ${it.transcript.name} • ${it.threadsUsed} Whisper thread(s)",
                         Toast.LENGTH_LONG
                     ).show()
-                    showScreen(Screen.TRANSCRIPTS)
+
+                    showScreen(
+                        Screen.TRANSCRIPTS
+                    )
                 }.onFailure {
                     Toast.makeText(
                         this,
@@ -1458,7 +1526,10 @@ class MainActivity : Activity() {
                     ).show()
                 }
             }
-        }, "BCI-WhisperCpp").start()
+        }, "BCI-WhisperCpp").apply {
+            priority =
+                Thread.MIN_PRIORITY
+        }.start()
     }
 
     private fun buildTranscriptsScreen(): ScrollView {
@@ -1491,7 +1562,9 @@ class MainActivity : Activity() {
         summary.addView(
             textView(
                 "Offline transcription uses whisper.cpp with the bundled tiny.en model. " +
-                    "Transcription is manual and never runs in the capture thread.",
+                    "It runs below the real-time audio path, reserves CPU headroom while monitoring, " +
+                    "drops to one Whisper thread during recording/live broadcast, and never runs " +
+                    "inside the capture thread.",
                 11f,
                 muted
             ).apply {
@@ -1933,6 +2006,27 @@ class MainActivity : Activity() {
 
             else ->
                 "NETWORK • outbound WSS supported"
+        }
+    }
+
+    @Synchronized
+    private fun acquireHeavyCompute(
+        owner: String
+    ): Boolean {
+        if (heavyComputeOwner != null) {
+            return false
+        }
+
+        heavyComputeOwner = owner
+        return true
+    }
+
+    @Synchronized
+    private fun releaseHeavyCompute(
+        owner: String
+    ) {
+        if (heavyComputeOwner == owner) {
+            heavyComputeOwner = null
         }
     }
 

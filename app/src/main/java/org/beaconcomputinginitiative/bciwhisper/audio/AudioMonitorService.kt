@@ -537,6 +537,15 @@ class AudioMonitorService : Service() {
     }
 
     private fun captureLoop() {
+        // Keep microphone transport and detector work ahead of non-real-time
+        // transcription/mastering CPU load. Some vendor kernels may reject the
+        // requested audio priority, so the request is best-effort.
+        runCatching {
+            Process.setThreadPriority(
+                Process.THREAD_PRIORITY_AUDIO
+            )
+        }
+
         val block =
             ShortArray(BLOCK_SIZE)
 

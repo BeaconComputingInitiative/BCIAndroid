@@ -1,6 +1,7 @@
 package org.beaconcomputinginitiative.bciwhisper.transcription
 
 import android.content.Context
+import android.os.Process
 import java.io.File
 import java.io.RandomAccessFile
 import kotlin.math.floor
@@ -9,10 +10,21 @@ class TranscriptionEngine(private val context: Context) {
     data class Result(
         val source: File,
         val transcript: File,
-        val text: String
+        val text: String,
+        val threadsUsed: Int,
+        val resourceMode: ResourceMode
     )
 
-    fun transcribe(wavFile: File): Result {
+    enum class ResourceMode {
+        CAPTURE_CRITICAL,
+        MONITORING,
+        IDLE
+    }
+
+    fun transcribe(
+        wavFile: File,
+        resourceMode: ResourceMode
+    ): Result {
         require(wavFile.isFile) { "Recording not found: ${wavFile.name}" }
 
         val model = ensureModel()
@@ -23,7 +35,19 @@ class TranscriptionEngine(private val context: Context) {
         require(ptr != 0L) { "whisper.cpp could not load the model" }
 
         try {
-            val threads = (Runtime.getRuntime().availableProcessors() - 2).coerceIn(2, 6)
+            // Transcription is intentionally a background workload. Audio capture,
+            // detection, event recording and broadcast are the real-time path.
+            runCatching {
+                Process.setThreadPriority(
+                    Process.THREAD_PRIORITY_BACKGROUND
+                )
+            }
+
+            val threads =
+                threadBudget(
+                    resourceMode
+                )
+
             val rc = WhisperNative.transcribe(ptr, audio16k, threads)
             require(rc == 0) { "whisper.cpp transcription failed: $rc" }
 
@@ -38,7 +62,13 @@ class TranscriptionEngine(private val context: Context) {
             val out = File(outDir, wavFile.nameWithoutExtension + ".txt")
             out.writeText(text + "\n")
 
-            return Result(wavFile, out, text)
+            return Result(
+                source = wavFile,
+                transcript = out,
+                text = text,
+                threadsUsed = threads,
+                resourceMode = resourceMode
+            )
         } finally {
             WhisperNative.freeContext(ptr)
         }
@@ -127,6 +157,36 @@ class TranscriptionEngine(private val context: Context) {
         val c = raf.readUnsignedByte()
         val d = raf.readUnsignedByte()
         return a or (b shl 8) or (c shl 16) or (d shl 24)
+    }
+
+    private fun threadBudget(
+        mode: ResourceMode
+    ): Int {
+        val cores =
+            Runtime
+                .getRuntime()
+                .availableProcessors()
+                .coerceAtLeast(1)
+
+        return when (mode) {
+            ResourceMode.CAPTURE_CRITICAL ->
+                1
+
+            ResourceMode.MONITORING ->
+                when {
+                    cores >= 6 -> 2
+                    else -> 1
+                }
+
+            ResourceMode.IDLE ->
+                maxOf(
+                    1,
+                    minOf(
+                        4,
+                        cores / 2
+                    )
+                )
+        }
     }
 
     companion object {

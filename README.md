@@ -2,7 +2,7 @@
 
 BCIAndroid is the dedicated native Android repository for BCIWhisper. Android source, CI, signing, APK artifacts, and Android releases live here independently from the desktop BCIWhisper repository.
 
-## Current mobile baseline — Alpha 10
+## Current mobile baseline — Alpha 11
 
 Workspaces:
 
@@ -218,3 +218,20 @@ BCIAndroid
 ```
 
 The desktop BCIWhisper repository remains the authority for the desktop application, gateway, StreamPlayer, and the sealed desktop release history.
+
+
+## Alpha 11 — capture-first workload balancing
+
+BCIAndroid now explicitly prioritizes continuous operation over offline compute:
+
+- The AudioRecord capture/detection thread requests Android's audio scheduling priority on a best-effort basis.
+- whisper.cpp transcription runs on a low-priority worker and never on the capture thread.
+- Whisper thread count is resource-aware:
+  - **1 thread** while a retained signal is being recorded or a live broadcast is active.
+  - **1–2 threads** while ordinary microphone monitoring is active, depending on CPU core count.
+  - Up to **half the available CPU cores, capped at 4**, when the audio boundary is idle.
+- Transcription and mastering share a single heavy-compute lane so they cannot saturate CPU simultaneously.
+- Monitoring, signal locking, event recording, spectrum telemetry and broadcast remain independent from that heavy-compute lane.
+- The tiny.en model remains the default to constrain memory and thermals on mobile hardware.
+
+The scheduler is deliberately capture-first: transcription may take longer while BCIWhisper is actively monitoring or broadcasting, but the real-time microphone path keeps CPU headroom.
