@@ -1,3 +1,10 @@
+/*
+ * BEACON COMPUTING INITIATIVE
+ * BCIAndroid Adaptive Spectral Lock
+ * Developer Seal: CJB-DEV-2026
+ * Integrity: SHA-256 emitted by Android CI for each committed revision.
+ */
+
 package org.beaconcomputinginitiative.bciwhisper.audio
 
 import org.jtransforms.fft.DoubleFFT_1D
@@ -47,6 +54,8 @@ class DetectionEngine(
     private var lockCenterHz = 1200.0
     private var lockInitialized = false
     private var lockAcquired = false
+    private var smoothedLockPresenceDb = -120.0
+    private var lockPresenceInitialized = false
 
     private var anchorLowHz = 80.0
     private var anchorHighHz = 8500.0
@@ -68,6 +77,8 @@ class DetectionEngine(
         lockCenterHz = 1200.0
         lockInitialized = false
         lockAcquired = false
+        smoothedLockPresenceDb = -120.0
+        lockPresenceInitialized = false
         anchorLowHz = 80.0
         anchorHighHz = 8500.0
         anchorCenterHz = 1200.0
@@ -165,7 +176,7 @@ class DetectionEngine(
         val spectral =
             estimateSpectralLock(spectrum)
 
-        val levelPresent =
+        val candidatePresent =
             snrDb >= required &&
                 spectral.excessDb >= LOCK_PRESENCE_DB
 
@@ -176,16 +187,13 @@ class DetectionEngine(
                 1.0
             }
 
-        val sameSignal =
-            levelPresent &&
-                (
-                    !lockAcquired ||
-                        similarity >= MIN_LOCK_SIMILARITY
-                    )
+        var sameSignal = false
+        var reportedLockExcessDb =
+            spectral.excessDb
 
         if (!lockAcquired) {
             triggerBlocks =
-                if (sameSignal) {
+                if (candidatePresent) {
                     triggerBlocks + 1
                 } else {
                     0
@@ -195,21 +203,56 @@ class DetectionEngine(
                 triggerBlocks >= MIN_TRIGGER_BLOCKS
             ) {
                 acquireLock(spectral)
-            } else if (sameSignal) {
+                sameSignal = true
+                reportedLockExcessDb =
+                    smoothedLockPresenceDb
+            } else if (candidatePresent) {
                 updateLock(
                     spectral.lowHz,
                     spectral.highHz,
                     spectral.centerHz,
                     anchorConstrained = false
                 )
+                sameSignal = true
             }
-        } else if (sameSignal) {
-            updateLock(
-                spectral.lowHz,
-                spectral.highHz,
-                spectral.centerHz,
-                anchorConstrained = true
-            )
+        } else {
+            // Once acquired, continuity is determined from energy inside the
+            // adaptive locked band against the 60-second spectral baseline.
+            // Candidate similarity gates tracking only; it no longer tears
+            // down a valid sustained lock when the candidate estimate jitters.
+            val rawLockPresenceDb =
+                bandExcessDb(
+                    spectrum,
+                    lockLowHz,
+                    lockHighHz
+                )
+
+            reportedLockExcessDb =
+                smoothLockPresence(
+                    rawLockPresenceDb
+                )
+
+            sameSignal =
+                reportedLockExcessDb >=
+                    LOCK_PRESENCE_DB
+
+            val candidateTracksLock =
+                spectral.excessDb >=
+                    LOCK_PRESENCE_DB &&
+                    similarity >=
+                    MIN_LOCK_SIMILARITY
+
+            if (
+                sameSignal &&
+                candidateTracksLock
+            ) {
+                updateLock(
+                    spectral.lowHz,
+                    spectral.highHz,
+                    spectral.centerHz,
+                    anchorConstrained = true
+                )
+            }
         }
 
         return Result(
@@ -239,7 +282,7 @@ class DetectionEngine(
             lockCenterHz =
                 lockCenterHz,
             lockExcessDb =
-                spectral.excessDb,
+                reportedLockExcessDb,
             spectrumBands =
                 visualBands(spectrum)
         )
@@ -265,6 +308,9 @@ class DetectionEngine(
 
         lockInitialized = true
         lockAcquired = true
+        smoothedLockPresenceDb =
+            spectral.excessDb
+        lockPresenceInitialized = true
     }
 
     private fun lockSimilarity(
@@ -344,7 +390,6 @@ class DetectionEngine(
             DoubleArray(power.size)
 
         var total = 0.0
-        var baselineTotal = 0.0
 
         for (bin in power.indices) {
             val hz =
@@ -364,8 +409,6 @@ class DetectionEngine(
                     spectralBaseline[bin],
                     0.40
                 ).coerceAtLeast(1e-14)
-
-            baselineTotal += floor
 
             val residual =
                 max(
@@ -467,12 +510,10 @@ class DetectionEngine(
             )
 
         val excess =
-            10.0 * log10(
-                (
-                    total /
-                        baselineTotal
-                            .coerceAtLeast(1e-18)
-                    ).coerceAtLeast(1e-12)
+            bandExcessDb(
+                power,
+                low,
+                high
             )
 
         return SpectralLock(
@@ -481,6 +522,97 @@ class DetectionEngine(
             center,
             excess
         )
+    }
+
+    private fun bandExcessDb(
+        power: DoubleArray,
+        lowHz: Double,
+        highHz: Double
+    ): Double {
+        if (
+            !lowHz.isFinite() ||
+            !highHz.isFinite() ||
+            highHz <= lowHz
+        ) {
+            return -120.0
+        }
+
+        var currentPower = 0.0
+        var baselinePower = 0.0
+        var bins = 0
+
+        for (bin in power.indices) {
+            val hz =
+                bin.toDouble() *
+                    sampleRate /
+                    fftSize
+
+            if (
+                hz < lowHz ||
+                hz > highHz ||
+                hz < LOW_LIMIT_HZ ||
+                hz > HIGH_LIMIT_HZ
+            ) {
+                continue
+            }
+
+            val floor =
+                percentile(
+                    spectralBaseline[bin],
+                    0.40
+                ).coerceAtLeast(1e-14)
+
+            currentPower +=
+                power[bin]
+                    .coerceAtLeast(0.0)
+
+            baselinePower += floor
+            bins++
+        }
+
+        if (
+            bins == 0 ||
+            baselinePower <= 1e-18
+        ) {
+            return -120.0
+        }
+
+        return (
+            10.0 *
+                log10(
+                    (
+                        currentPower /
+                            baselinePower
+                        ).coerceAtLeast(
+                        1e-12
+                    )
+                )
+            )
+            .coerceIn(
+                -120.0,
+                120.0
+            )
+    }
+
+    private fun smoothLockPresence(
+        rawDb: Double
+    ): Double {
+        if (!lockPresenceInitialized) {
+            smoothedLockPresenceDb =
+                rawDb
+            lockPresenceInitialized =
+                true
+            return smoothedLockPresenceDb
+        }
+
+        smoothedLockPresenceDb +=
+            LOCK_PRESENCE_SMOOTHING *
+                (
+                    rawDb -
+                        smoothedLockPresenceDb
+                    )
+
+        return smoothedLockPresenceDb
     }
 
     private fun updateLock(
@@ -746,11 +878,12 @@ class DetectionEngine(
         private const val HIGH_LIMIT_HZ = 8500.0
         private const val LOW_QUANTILE = 0.12
         private const val HIGH_QUANTILE = 0.92
-        private const val MIN_BANDWIDTH_HZ = 700.0
-        private const val LOCK_MARGIN_HZ = 150.0
+        private const val MIN_BANDWIDTH_HZ = 450.0
+        private const val LOCK_MARGIN_HZ = 140.0
         private const val LOCK_SMOOTHING = 0.28
         private const val LOCK_MAX_STEP_HZ = 180.0
         private const val LOCK_PRESENCE_DB = 3.0
+        private const val LOCK_PRESENCE_SMOOTHING = 0.5
         private const val MIN_LOCK_SIMILARITY = 0.52
         private const val LOCK_CENTER_TOLERANCE_HZ = 650.0
         private const val LOCK_CENTER_TOLERANCE_FRACTION = 0.55
