@@ -1,3 +1,10 @@
+/*
+ * BEACON COMPUTING INITIATIVE
+ * BCIAndroid Application Build
+ * Developer Seal: CJB-DEV-2026
+ * Integrity: SHA-256 emitted by Android CI for each committed revision.
+ */
+
 val releaseStoreFile = System.getenv("BCI_ANDROID_KEYSTORE")
 val releaseStorePassword = System.getenv("BCI_ANDROID_KEYSTORE_PASSWORD")
 val releaseKeyAlias = System.getenv("BCI_ANDROID_KEY_ALIAS")
@@ -22,8 +29,8 @@ android {
         applicationId = "org.beaconcomputinginitiative.bciwhisper"
         minSdk = 28
         targetSdk = 36
-        versionCode = 11
-        versionName = "6.0-android-alpha11"
+        versionCode = 12
+        versionName = "6.0-android-alpha12"
 
         ndk {
             abiFilters += listOf("arm64-v8a")

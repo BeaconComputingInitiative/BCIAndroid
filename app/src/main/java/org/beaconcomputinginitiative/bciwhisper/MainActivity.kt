@@ -1,3 +1,10 @@
+/*
+ * BEACON COMPUTING INITIATIVE
+ * BCIAndroid Main Interface
+ * Developer Seal: CJB-DEV-2026
+ * Integrity: SHA-256 emitted by Android CI for each committed revision.
+ */
+
 package org.beaconcomputinginitiative.bciwhisper
 
 import android.Manifest
@@ -17,7 +24,9 @@ import android.view.ViewGroup
 import android.widget.*
 import org.beaconcomputinginitiative.bciwhisper.audio.AudioMonitorService
 import org.beaconcomputinginitiative.bciwhisper.audio.ReconstructionMasteringEngine
+import org.beaconcomputinginitiative.bciwhisper.broadcast.BroadcastConfig
 import org.beaconcomputinginitiative.bciwhisper.broadcast.BroadcastPublisher
+import org.beaconcomputinginitiative.bciwhisper.broadcast.PublisherCredentialStore
 import org.beaconcomputinginitiative.bciwhisper.transcription.TranscriptionEngine
 import org.beaconcomputinginitiative.bciwhisper.ui.Spectrum3DView
 import java.util.Locale
@@ -97,14 +106,21 @@ class MainActivity : Activity() {
     private var pendingBluetoothSelection = false
 
     private var networkText: TextView? = null
-    private var gatewayEdit: EditText? = null
+    private var credentialStatusText: TextView? = null
     private var tokenEdit: EditText? = null
     private var broadcastStatusText: TextView? = null
     private var goLiveButton: Button? = null
     private var stopLiveButton: Button? = null
+    private var openPlayerButton: Button? = null
+    private var forgetPublisherButton: Button? = null
 
     private val transcriptionEngine by lazy { TranscriptionEngine(this) }
     private val masteringEngine by lazy { ReconstructionMasteringEngine() }
+    private val publisherCredentials by lazy {
+        PublisherCredentialStore(this)
+    }
+
+    private var publisherCredentialConfigured = false
     @Volatile private var transcriptionBusy = false
     @Volatile private var masteringBusy = false
 
@@ -144,6 +160,9 @@ class MainActivity : Activity() {
         window.statusBarColor = bg
         window.navigationBarColor = bg
 
+        publisherCredentialConfigured =
+            publisherCredentials.isConfigured()
+
         setContentView(buildShell())
         showScreen(Screen.MONITOR)
         maybeRequestMicrophonePermissionOnce()
@@ -157,6 +176,8 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        publisherCredentialConfigured =
+            publisherCredentials.isConfigured()
         renderSnapshot()
     }
 
@@ -362,29 +383,6 @@ class MainActivity : Activity() {
             return
         }
 
-        val publishUrl =
-            gatewayEdit?.text?.toString()?.trim().orEmpty()
-        val token =
-            tokenEdit?.text?.toString().orEmpty()
-
-        if (!publishUrl.startsWith("wss://")) {
-            Toast.makeText(
-                this,
-                "Use a secure wss:// BCI Broadcast Gateway URL.",
-                Toast.LENGTH_LONG
-            ).show()
-            return
-        }
-
-        if (token.isBlank()) {
-            Toast.makeText(
-                this,
-                "Enter the publisher token.",
-                Toast.LENGTH_LONG
-            ).show()
-            return
-        }
-
         if (!isNetworkAvailable()) {
             Toast.makeText(
                 this,
@@ -394,25 +392,111 @@ class MainActivity : Activity() {
             return
         }
 
-        prefs.edit()
-            .putString(KEY_GATEWAY_URL, publishUrl)
-            .apply()
+        val enteredCredential =
+            tokenEdit
+                ?.text
+                ?.toString()
+                ?.trim()
+                .orEmpty()
+
+        if (enteredCredential.isNotBlank()) {
+            val stored =
+                runCatching {
+                    publisherCredentials.save(
+                        enteredCredential
+                    )
+                }
+
+            if (stored.isFailure) {
+                Toast.makeText(
+                    this,
+                    "Unable to secure the publisher key.",
+                    Toast.LENGTH_LONG
+                ).show()
+                return
+            }
+
+            publisherCredentialConfigured = true
+            tokenEdit?.text?.clear()
+        }
+
+        if (!publisherCredentialConfigured) {
+            Toast.makeText(
+                this,
+                "Enter the BCI publisher key once. Android Keystore will protect it on this device.",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
 
         startForegroundService(
-            Intent(this, AudioMonitorService::class.java)
-                .setAction(AudioMonitorService.ACTION_GO_LIVE)
-                .putExtra(
-                    AudioMonitorService.EXTRA_PUBLISH_URL,
-                    publishUrl
+            Intent(
+                this,
+                AudioMonitorService::class.java
+            )
+                .setAction(
+                    AudioMonitorService.ACTION_GO_LIVE
                 )
                 .putExtra(
-                    AudioMonitorService.EXTRA_PUBLISHER_TOKEN,
-                    token
+                    AudioMonitorService.EXTRA_INPUT_SOURCE,
+                    selectedInputSource()
                 )
         )
 
-        tokenEdit?.text?.clear()
         bindAudioService()
+        renderPublisherCredentialState()
+    }
+
+    private fun openLivePlayer() {
+        startActivity(
+            Intent(
+                Intent.ACTION_VIEW,
+                Uri.parse(
+                    BroadcastConfig.PUBLIC_PLAYER_URL
+                )
+            )
+        )
+    }
+
+    private fun forgetPublisherCredential() {
+        stopLive()
+        publisherCredentials.clear()
+        publisherCredentialConfigured = false
+        tokenEdit?.text?.clear()
+        renderPublisherCredentialState()
+
+        Toast.makeText(
+            this,
+            "BCI publisher key removed from this device.",
+            Toast.LENGTH_LONG
+        ).show()
+    }
+
+    private fun hasPublisherCredentialForLive(): Boolean =
+        publisherCredentialConfigured ||
+            !tokenEdit
+                ?.text
+                ?.toString()
+                ?.trim()
+                .isNullOrEmpty()
+
+    private fun renderPublisherCredentialState() {
+        credentialStatusText?.text =
+            if (publisherCredentialConfigured) {
+                "PUBLISHER KEY • secured by Android Keystore"
+            } else {
+                "PUBLISHER KEY • not configured"
+            }
+
+        tokenEdit?.hint =
+            if (publisherCredentialConfigured) {
+                "Leave blank to use the stored key"
+            } else {
+                "Enter publisher key once"
+            }
+
+        forgetPublisherButton?.isEnabled =
+            publisherCredentialConfigured
     }
 
     private fun stopLive() {
@@ -601,11 +685,13 @@ class MainActivity : Activity() {
         startButton = null
         stopButton = null
         networkText = null
-        gatewayEdit = null
+        credentialStatusText = null
         tokenEdit = null
         broadcastStatusText = null
         goLiveButton = null
         stopLiveButton = null
+        openPlayerButton = null
+        forgetPublisherButton = null
 
         val scroll = ScrollView(this).apply {
             isFillViewport = true
@@ -938,41 +1024,38 @@ class MainActivity : Activity() {
 
         broadcastCard.addView(
             textView(
-                "Gateway",
+                "BCI LIVE PLAYER",
                 11f,
                 maroon,
                 role = FontRole.BRAND
             )
         )
 
-        gatewayEdit = EditText(this).apply {
-            setText(
-                prefs.getString(
-                    KEY_GATEWAY_URL,
-                    ""
-                ).orEmpty()
-            )
-            hint =
-                "wss://gateway.example/api/v1/publish/bciwhisper-main"
-            setHintTextColor(muted)
+        broadcastCard.addView(
+            textView(
+                BroadcastConfig.PUBLIC_PLAYER_URL,
+                12f,
+                cyan,
+                role = FontRole.DATA
+            ).apply {
+                setPadding(0, dp(4), 0, dp(8))
+            }
+        )
+
+        openPlayerButton = Button(this).apply {
+            text = "OPEN PUBLIC PLAYER"
             setTextColor(primaryText)
-            typeface = dataTypeface
-            setSingleLine(true)
-            inputType =
-                InputType.TYPE_CLASS_TEXT or
-                    InputType.TYPE_TEXT_VARIATION_URI
-            setPadding(
-                dp(8),
-                dp(8),
-                dp(8),
-                dp(8)
-            )
+            typeface = uiTypeface
+            setBackgroundColor(panel)
+            setOnClickListener {
+                openLivePlayer()
+            }
         }
-        broadcastCard.addView(gatewayEdit)
+        broadcastCard.addView(openPlayerButton)
 
         broadcastCard.addView(
             textView(
-                "Publisher token",
+                "PUBLISH ENDPOINT",
                 11f,
                 maroon,
                 role = FontRole.BRAND
@@ -981,8 +1064,28 @@ class MainActivity : Activity() {
             }
         )
 
+        broadcastCard.addView(
+            textView(
+                BroadcastConfig.PUBLISH_URL,
+                10f,
+                muted,
+                role = FontRole.DATA
+            )
+        )
+
+        credentialStatusText = textView(
+            "",
+            11f,
+            muted,
+            role = FontRole.DATA
+        ).apply {
+            setPadding(0, dp(12), 0, 0)
+        }
+        broadcastCard.addView(
+            credentialStatusText
+        )
+
         tokenEdit = EditText(this).apply {
-            hint = "Token is used for this connection only"
             setHintTextColor(muted)
             setTextColor(primaryText)
             typeface = dataTypeface
@@ -998,6 +1101,22 @@ class MainActivity : Activity() {
             )
         }
         broadcastCard.addView(tokenEdit)
+
+        forgetPublisherButton = Button(this).apply {
+            text = "FORGET PUBLISHER KEY"
+            setTextColor(primaryText)
+            typeface = uiTypeface
+            setBackgroundColor(panel)
+            isEnabled = false
+            setOnClickListener {
+                forgetPublisherCredential()
+            }
+        }
+        broadcastCard.addView(
+            forgetPublisherButton
+        )
+
+        renderPublisherCredentialState()
 
         val broadcastControls =
             LinearLayout(this).apply {
@@ -1770,7 +1889,9 @@ class MainActivity : Activity() {
 
             broadcastStatusText?.text = "OFFLINE"
             goLiveButton?.isEnabled =
-                hasPermission && isNetworkAvailable()
+                hasPermission &&
+                    isNetworkAvailable() &&
+                    hasPublisherCredentialForLive()
             stopLiveButton?.isEnabled = false
             return
         }
@@ -1944,6 +2065,7 @@ class MainActivity : Activity() {
         goLiveButton?.isEnabled =
             hasPermission &&
                 isNetworkAvailable() &&
+                hasPublisherCredentialForLive() &&
                 !liveOrConnecting
 
         stopLiveButton?.isEnabled =
@@ -2043,8 +2165,6 @@ class MainActivity : Activity() {
             "bciwhisper_permissions"
         private const val KEY_MICROPHONE_PROMPTED =
             "microphone_prompted_once"
-        private const val KEY_GATEWAY_URL =
-            "broadcast_gateway_url"
         private const val KEY_BLUETOOTH_PROMPTED =
             "bluetooth_connect_prompted_once"
         private const val KEY_INPUT_SOURCE =
