@@ -7,6 +7,12 @@ on:
       - main
     paths:
       - "gateway/**"
+      - "render.yaml"
+      - ".github/workflows/build-gateway.yml"
+  pull_request:
+    paths:
+      - "gateway/**"
+      - "render.yaml"
       - ".github/workflows/build-gateway.yml"
 
 jobs:
