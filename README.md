@@ -92,7 +92,11 @@ The Android application embeds whisper.cpp as a pinned native ARM64 dependency a
 
 ## Broadcast
 
-Android Go Live makes an outbound authenticated `wss://` connection. No inbound mobile-network port is required, so carrier NAT / CGNAT is compatible with the design.
+BCIAndroid now owns a dedicated live-gateway service under `gateway/`. Android Go Live makes an outbound authenticated `wss://` connection to that service. The gateway accepts only the configured Android publisher identity, transcodes the 44.1 kHz mono PCM16 uplink to MP3, exposes a listener stream and StreamPlayer, and keeps its own SQLite WAL event log.
+
+No inbound mobile-network port is required on the Android device, so carrier NAT / CGNAT remains compatible with the design.
+
+The gateway code is production-deployable, but it is not considered publicly live until it is deployed behind a real TLS endpoint and validated from a physical Android device over Wi-Fi and cellular data.
 
 ## Build
 
@@ -211,7 +215,9 @@ This repository owns the Android application lifecycle:
 BCIAndroid
 ├── app/
 ├── vendor/whisper.cpp
+├── gateway/
 ├── Android CI
+├── gateway CI
 ├── Android signing
 ├── APK artifacts
 └── Android releases
