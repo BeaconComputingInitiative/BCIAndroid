@@ -7,6 +7,12 @@ on:
       - main
     paths:
       - "gateway/**"
+      - "render.yaml"
+      - ".github/workflows/build-gateway.yml"
+  pull_request:
+    paths:
+      - "gateway/**"
+      - "render.yaml"
       - ".github/workflows/build-gateway.yml"
 
 jobs:
@@ -32,6 +38,18 @@ jobs:
       - name: Compile-check gateway
         working-directory: gateway
         run: bun run check
+
+      - name: BCI source integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "BEACON COMPUTING INITIATIVE"
+          echo "Developer Seal: CJB-DEV-2026"
+          sha256sum \
+            gateway/src/server.ts \
+            gateway/Dockerfile \
+            gateway/package.json \
+            render.yaml
 
       - name: Smoke-test gateway
         run: bash gateway/test/smoke.sh
