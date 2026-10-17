@@ -1,3 +1,10 @@
+/*
+ * BEACON COMPUTING INITIATIVE
+ * BCIAndroid Audio Monitor Service
+ * Developer Seal: CJB-DEV-2026
+ * Integrity: SHA-256 emitted by Android CI for each committed revision.
+ */
+
 package org.beaconcomputinginitiative.bciwhisper.audio
 
 import android.Manifest
@@ -8,7 +15,9 @@ import android.media.*
 import android.os.*
 import org.beaconcomputinginitiative.bciwhisper.MainActivity
 import org.beaconcomputinginitiative.bciwhisper.R
+import org.beaconcomputinginitiative.bciwhisper.broadcast.BroadcastConfig
 import org.beaconcomputinginitiative.bciwhisper.broadcast.BroadcastPublisher
+import org.beaconcomputinginitiative.bciwhisper.broadcast.PublisherCredentialStore
 import java.io.File
 import kotlin.math.log10
 import kotlin.math.pow
@@ -65,6 +74,10 @@ class AudioMonitorService : Service() {
 
     private val publisher =
         BroadcastPublisher()
+
+    private val publisherCredentials by lazy {
+        PublisherCredentialStore(this)
+    }
 
     private val bluetoothRouter by lazy {
         BluetoothAudioRouter(this)
@@ -171,24 +184,18 @@ class AudioMonitorService : Service() {
             ACTION_GO_LIVE -> {
                 startMonitoring()
 
-                val url =
-                    intent
-                        .getStringExtra(
-                            EXTRA_PUBLISH_URL
-                        )
-                        .orEmpty()
-                        .trim()
-
                 val token =
-                    intent
-                        .getStringExtra(
-                            EXTRA_PUBLISHER_TOKEN
-                        )
+                    publisherCredentials
+                        .read()
                         .orEmpty()
 
                 try {
+                    require(token.isNotBlank()) {
+                        "Publisher credential is not configured"
+                    }
+
                     publisher.start(
-                        url,
+                        BroadcastConfig.PUBLISH_URL,
                         token
                     )
 
@@ -989,12 +996,6 @@ class AudioMonitorService : Service() {
         const val ACTION_STOP_LIVE =
             "org.beaconcomputinginitiative." +
                 "bciwhisper.STOP_LIVE"
-
-        const val EXTRA_PUBLISH_URL =
-            "publish_url"
-
-        const val EXTRA_PUBLISHER_TOKEN =
-            "publisher_token"
 
         const val EXTRA_INPUT_SOURCE =
             "input_source"
