@@ -1,8 +1,8 @@
-# BCIWhisper Android
+# BCIAndroid — BCIWhisper for Android
 
-BCIWhisper Android is the native Android port of the BCIWhisper workflow.
+BCIAndroid is the dedicated native Android repository for BCIWhisper. Android source, CI, signing, APK artifacts, and Android releases live here independently from the desktop BCIWhisper repository.
 
-## Current mobile baseline — Alpha 6
+## Current mobile baseline — Alpha 10
 
 Workspaces:
 
@@ -106,7 +106,6 @@ Requirements:
 - Gradle 9.5.0
 
 ```bash
-cd android
 gradle :app:assembleDebug
 ```
 
@@ -129,7 +128,7 @@ org.beaconcomputinginitiative.bciwhisper
 - real LTE/5G -> public gateway broadcast validation
 - whisper.cpp thermal / latency profiling on ARM64 hardware
 - EBU R128 integrated loudness and oversampled true-peak implementation
-- production signing / release-key custody
+- physical-device validation of the permanent release signing identity
 
 These are not represented as passed until they have real device or release-key evidence.
 
@@ -202,3 +201,20 @@ Required GitHub Actions secrets:
 The workflow materializes the keystore only inside the ephemeral GitHub Actions runner, builds `:app:assembleRelease`, verifies the APK with `apksigner --print-certs`, hashes it, and uploads the signed APK as a workflow artifact.
 
 The signing key itself must remain under operator custody. Losing that private key can prevent future updates from being accepted as the same application identity.
+
+
+## Repository boundary
+
+This repository owns the Android application lifecycle:
+
+```text
+BCIAndroid
+├── app/
+├── vendor/whisper.cpp
+├── Android CI
+├── Android signing
+├── APK artifacts
+└── Android releases
+```
+
+The desktop BCIWhisper repository remains the authority for the desktop application, gateway, StreamPlayer, and the sealed desktop release history.

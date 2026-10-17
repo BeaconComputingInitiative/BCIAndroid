@@ -64,7 +64,8 @@ class AudioInputOptimizer(
             channelCounts =
                 device.channelCounts
                     .filter { it > 0 }
-                    .sortedArrayDescending()
+                    .sortedDescending()
+                    .toIntArray()
         )
     }
 
