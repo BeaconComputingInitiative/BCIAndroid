@@ -13,6 +13,15 @@ on:
       - "gradle.properties"
       - ".gitmodules"
       - ".github/workflows/build-android.yml"
+  pull_request:
+    paths:
+      - "app/**"
+      - "vendor/**"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
+      - "gradle.properties"
+      - ".gitmodules"
+      - ".github/workflows/build-android.yml"
 
 jobs:
   build:
@@ -66,6 +75,20 @@ jobs:
           curl -fL --retry 4             https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin             -o app/src/main/assets/models/ggml-tiny.en.bin
           test "$(stat -c%s app/src/main/assets/models/ggml-tiny.en.bin)" -gt 1000000
 
+      - name: BCI source integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "BEACON COMPUTING INITIATIVE"
+          echo "Developer Seal: CJB-DEV-2026"
+          sha256sum \
+            app/src/main/java/org/beaconcomputinginitiative/bciwhisper/MainActivity.kt \
+            app/src/main/java/org/beaconcomputinginitiative/bciwhisper/audio/AudioMonitorService.kt \
+            app/src/main/java/org/beaconcomputinginitiative/bciwhisper/broadcast/BroadcastConfig.kt \
+            app/src/main/java/org/beaconcomputinginitiative/bciwhisper/broadcast/BroadcastPublisher.kt \
+            app/src/main/java/org/beaconcomputinginitiative/bciwhisper/broadcast/PublisherCredentialStore.kt \
+            app/build.gradle.kts
+
       - name: Build debug APK
         run: gradle --no-daemon --stacktrace :app:assembleDebug
 
@@ -113,16 +136,16 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          cp app/build/outputs/apk/debug/app-debug.apk             out/BCIWhisper-v6.0-Android-alpha11-debug.apk
+          cp app/build/outputs/apk/debug/app-debug.apk             out/BCIWhisper-v6.0-Android-alpha12-debug.apk
           (
             cd out
-            sha256sum BCIWhisper-v6.0-Android-alpha11-debug.apk               > BCIWhisper-v6.0-Android-alpha11-debug.apk.sha256
+            sha256sum BCIWhisper-v6.0-Android-alpha12-debug.apk               > BCIWhisper-v6.0-Android-alpha12-debug.apk.sha256
           )
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: BCIWhisper-Android-alpha11
+          name: BCIWhisper-Android-alpha12
           path: out/*
           if-no-files-found: error
           retention-days: 14
