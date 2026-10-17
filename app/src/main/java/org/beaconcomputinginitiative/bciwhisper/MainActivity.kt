@@ -1019,41 +1019,38 @@ class MainActivity : Activity() {
 
         broadcastCard.addView(
             textView(
-                "Gateway",
+                "BCI LIVE PLAYER",
                 11f,
                 maroon,
                 role = FontRole.BRAND
             )
         )
 
-        gatewayEdit = EditText(this).apply {
-            setText(
-                prefs.getString(
-                    KEY_GATEWAY_URL,
-                    ""
-                ).orEmpty()
-            )
-            hint =
-                "wss://gateway.example/api/v1/publish/bciwhisper-main"
-            setHintTextColor(muted)
+        broadcastCard.addView(
+            textView(
+                BroadcastConfig.PUBLIC_PLAYER_URL,
+                12f,
+                cyan,
+                role = FontRole.DATA
+            ).apply {
+                setPadding(0, dp(4), 0, dp(8))
+            }
+        )
+
+        openPlayerButton = Button(this).apply {
+            text = "OPEN PUBLIC PLAYER"
             setTextColor(primaryText)
-            typeface = dataTypeface
-            setSingleLine(true)
-            inputType =
-                InputType.TYPE_CLASS_TEXT or
-                    InputType.TYPE_TEXT_VARIATION_URI
-            setPadding(
-                dp(8),
-                dp(8),
-                dp(8),
-                dp(8)
-            )
+            typeface = uiTypeface
+            setBackgroundColor(panel)
+            setOnClickListener {
+                openLivePlayer()
+            }
         }
-        broadcastCard.addView(gatewayEdit)
+        broadcastCard.addView(openPlayerButton)
 
         broadcastCard.addView(
             textView(
-                "Publisher token",
+                "PUBLISH ENDPOINT",
                 11f,
                 maroon,
                 role = FontRole.BRAND
@@ -1062,8 +1059,28 @@ class MainActivity : Activity() {
             }
         )
 
+        broadcastCard.addView(
+            textView(
+                BroadcastConfig.PUBLISH_URL,
+                10f,
+                muted,
+                role = FontRole.DATA
+            )
+        )
+
+        credentialStatusText = textView(
+            "",
+            11f,
+            muted,
+            role = FontRole.DATA
+        ).apply {
+            setPadding(0, dp(12), 0, 0)
+        }
+        broadcastCard.addView(
+            credentialStatusText
+        )
+
         tokenEdit = EditText(this).apply {
-            hint = "Token is used for this connection only"
             setHintTextColor(muted)
             setTextColor(primaryText)
             typeface = dataTypeface
@@ -1079,6 +1096,22 @@ class MainActivity : Activity() {
             )
         }
         broadcastCard.addView(tokenEdit)
+
+        forgetPublisherButton = Button(this).apply {
+            text = "FORGET PUBLISHER KEY"
+            setTextColor(primaryText)
+            typeface = uiTypeface
+            setBackgroundColor(panel)
+            isEnabled = false
+            setOnClickListener {
+                forgetPublisherCredential()
+            }
+        }
+        broadcastCard.addView(
+            forgetPublisherButton
+        )
+
+        renderPublisherCredentialState()
 
         val broadcastControls =
             LinearLayout(this).apply {
@@ -1851,7 +1884,9 @@ class MainActivity : Activity() {
 
             broadcastStatusText?.text = "OFFLINE"
             goLiveButton?.isEnabled =
-                hasPermission && isNetworkAvailable()
+                hasPermission &&
+                    isNetworkAvailable() &&
+                    hasPublisherCredentialForLive()
             stopLiveButton?.isEnabled = false
             return
         }
@@ -2025,6 +2060,7 @@ class MainActivity : Activity() {
         goLiveButton?.isEnabled =
             hasPermission &&
                 isNetworkAvailable() &&
+                hasPublisherCredentialForLive() &&
                 !liveOrConnecting
 
         stopLiveButton?.isEnabled =
@@ -2124,8 +2160,6 @@ class MainActivity : Activity() {
             "bciwhisper_permissions"
         private const val KEY_MICROPHONE_PROMPTED =
             "microphone_prompted_once"
-        private const val KEY_GATEWAY_URL =
-            "broadcast_gateway_url"
         private const val KEY_BLUETOOTH_PROMPTED =
             "bluetooth_connect_prompted_once"
         private const val KEY_INPUT_SOURCE =
