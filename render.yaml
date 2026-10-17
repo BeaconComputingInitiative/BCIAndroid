@@ -1,0 +1,29 @@
+# ==============================================================================
+# BEACON COMPUTING INITIATIVE
+# BCIAndroid Live Gateway - Render Blueprint
+# Developer Seal: CJB-DEV-2026
+# Integrity: SHA-256 emitted by .github/workflows/build-gateway.yml
+# ==============================================================================
+
+services:
+  - type: web
+    name: bciandroid-live
+    runtime: docker
+    plan: free
+    dockerfilePath: ./gateway/Dockerfile
+    dockerContext: ./gateway
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: BCI_PUBLISHER_TOKEN
+        generateValue: true
+      - key: BCI_ADMIN_TOKEN
+        generateValue: true
+      - key: BCI_STREAM_ID
+        value: bciandroid-main
+      - key: BCI_EXPECTED_PUBLISHER_ID
+        value: bciwhisper-android
+      - key: BCI_MAX_LISTENERS
+        value: "128"
+      - key: BCI_REPLAY_BUFFER_BYTES
+        value: "1048576"
