@@ -1,3 +1,10 @@
+/*
+ * BEACON COMPUTING INITIATIVE
+ * BCIAndroid Live Gateway
+ * Developer Seal: CJB-DEV-2026
+ * Integrity: SHA-256 emitted by gateway CI for each committed revision.
+ */
+
 #!/usr/bin/env bun
 import { Database } from "bun:sqlite";
 import { timingSafeEqual } from "node:crypto";
@@ -9,7 +16,7 @@ const PROTOCOL = "bci-broadcast-v1";
 const SERVICE = "BCIAndroid Live Gateway";
 
 const host = Bun.env.BCI_HOST || "0.0.0.0";
-const port = Number.parseInt(Bun.env.BCI_PORT || "8776", 10);
+const port = Number.parseInt(Bun.env.PORT || Bun.env.BCI_PORT || "8776", 10);
 const streamId = Bun.env.BCI_STREAM_ID || "bciandroid-main";
 const expectedPublisherId =
   Bun.env.BCI_EXPECTED_PUBLISHER_ID || "bciwhisper-android";
@@ -20,7 +27,9 @@ const maxListeners = Number.parseInt(
   10
 );
 const publicBase =
-  Bun.env.BCI_PUBLIC_BASE_URL || `http://127.0.0.1:${port}`;
+  Bun.env.BCI_PUBLIC_BASE_URL ||
+  Bun.env.RENDER_EXTERNAL_URL ||
+  `http://127.0.0.1:${port}`;
 const dbPath = resolve(
   Bun.env.BCI_DB_PATH || "./data/bciandroid_gateway.db"
 );
@@ -462,13 +471,13 @@ const server =
             ...metadata,
           },
           playerUrl:
-            `${publicBase.replace(/\/$/, "")}/player`,
+            `${publicBase.replace(/\/$/, "")}/`,
         });
       }
 
       if (
-        u.pathname ===
-        "/player"
+        u.pathname === "/" ||
+        u.pathname === "/player"
       ) {
         return new Response(
           playerHtml,
@@ -779,9 +788,7 @@ const server =
             const codec =
               String(
                 body.codec || ""
-              )
-                .toLowerCase()
-                as PublisherCodec;
+              ).toLowerCase() as PublisherCodec;
 
             if (
               body.protocol !==
@@ -1036,7 +1043,7 @@ console.log(
   `[BCIAndroid] Expected publisher: ${expectedPublisherId}`
 );
 console.log(
-  `[BCIAndroid] Player: ${publicBase.replace(/\/$/, "")}/player`
+  `[BCIAndroid] Player: ${publicBase.replace(/\/$/, "")}/`
 );
 
 event(
