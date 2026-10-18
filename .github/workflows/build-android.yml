@@ -89,6 +89,7 @@ jobs:
             app/src/main/java/org/beaconcomputinginitiative/bciwhisper/audio/RecordingActivityTimeline.kt \
             app/src/main/java/org/beaconcomputinginitiative/bciwhisper/audio/VoiceIsolationProcessor.kt \
             app/src/main/java/org/beaconcomputinginitiative/bciwhisper/transcription/TranscriptionAudioPlanner.kt \
+            app/src/main/java/org/beaconcomputinginitiative/bciwhisper/transcription/PhoneticReconstructionEngine.kt \
             app/src/main/java/org/beaconcomputinginitiative/bciwhisper/transcription/TranscriptionEngine.kt \
             app/src/main/java/org/beaconcomputinginitiative/bciwhisper/broadcast/BroadcastConfig.kt \
             app/src/main/java/org/beaconcomputinginitiative/bciwhisper/broadcast/BroadcastPublisher.kt \
