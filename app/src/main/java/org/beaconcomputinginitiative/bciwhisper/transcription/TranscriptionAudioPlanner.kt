@@ -15,7 +15,9 @@ import kotlin.math.sqrt
  * Converts preserved recording audio into a transcription-only inference stream.
  *
  * Long dead-air intervals are removed only from the inference copy. Original
- * WAV files remain byte-for-byte untouched.
+ * WAV files remain byte-for-byte untouched. Short pauses are retained and
+ * long gaps are reduced conservatively so phoneme boundaries, speech rhythm,
+ * stress, and prosodic timing remain useful to the recognizer.
  */
 class TranscriptionAudioPlanner {
     data class Plan(
@@ -574,13 +576,13 @@ class TranscriptionAudioPlanner {
 
     companion object {
         private const val CONTEXT_PADDING_SECONDS =
-            0.35
+            0.45
 
         private const val MERGE_GAP_SECONDS =
-            0.60
+            1.25
 
         private const val SEGMENT_SEPARATOR_SECONDS =
-            0.20
+            0.65
 
         private const val MIN_TRANSCRIBABLE_ACTIVITY_SECONDS =
             0.40
