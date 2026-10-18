@@ -281,7 +281,7 @@ class TranscriptionAudioPlanner {
         val floorIndex =
             (
                 (sorted.size - 1) *
-                    0.30
+                    FALLBACK_FLOOR_PERCENTILE
                 )
                 .toInt()
                 .coerceIn(
@@ -292,11 +292,21 @@ class TranscriptionAudioPlanner {
         val floor =
             sorted[floorIndex]
 
+        val adaptiveThreshold =
+            floor +
+                FALLBACK_ACTIVITY_MARGIN_DB
+
+        // The fallback exists to remove obvious dead air, not to perform
+        // aggressive VAD. If a recording is mostly speech, the lower
+        // percentile can still land inside voiced material; capping the
+        // threshold prevents speech from calibrating itself out.
         val threshold =
             maxOf(
-                floor +
-                    FALLBACK_ACTIVITY_MARGIN_DB,
-                FALLBACK_ABSOLUTE_MIN_DBFS
+                FALLBACK_ABSOLUTE_MIN_DBFS,
+                minOf(
+                    adaptiveThreshold,
+                    FALLBACK_MAX_ACTIVITY_THRESHOLD_DBFS
+                )
             )
 
         val active =
@@ -596,8 +606,14 @@ class TranscriptionAudioPlanner {
         private const val FALLBACK_HANGOVER_SECONDS =
             0.30
 
+        private const val FALLBACK_FLOOR_PERCENTILE =
+            0.10
+
         private const val FALLBACK_ACTIVITY_MARGIN_DB =
             6.0
+
+        private const val FALLBACK_MAX_ACTIVITY_THRESHOLD_DBFS =
+            -42.0
 
         private const val FALLBACK_ABSOLUTE_MIN_DBFS =
             -90.0
