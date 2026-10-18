@@ -40,8 +40,8 @@ class SpeakerDiarizerTest {
         writeVoice(
             audio = audio,
             sampleRate = sampleRate,
-            startSeconds = 1.2,
-            endSeconds = 2.2,
+            startSeconds = 1.4,
+            endSeconds = 2.4,
             components =
                 doubleArrayOf(
                     180.0,
@@ -54,8 +54,8 @@ class SpeakerDiarizerTest {
         writeVoice(
             audio = audio,
             sampleRate = sampleRate,
-            startSeconds = 2.4,
-            endSeconds = 3.4,
+            startSeconds = 2.8,
+            endSeconds = 3.8,
             components =
                 doubleArrayOf(
                     310.0,
@@ -74,13 +74,13 @@ class SpeakerDiarizerTest {
                 ),
                 SpeakerDiarizer.Segment(
                     text = "second turn",
-                    start10ms = 120,
-                    end10ms = 220
+                    start10ms = 140,
+                    end10ms = 240
                 ),
                 SpeakerDiarizer.Segment(
                     text = "different turn",
-                    start10ms = 240,
-                    end10ms = 340
+                    start10ms = 280,
+                    end10ms = 380
                 )
             )
 
