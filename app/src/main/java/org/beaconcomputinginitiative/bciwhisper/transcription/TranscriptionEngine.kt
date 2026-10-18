@@ -1,3 +1,10 @@
+/*
+ * BEACON COMPUTING INITIATIVE
+ * BCIAndroid Dead-Air-Aware Transcription Engine
+ * Developer Seal: CJB-DEV-2026
+ * Integrity: SHA-256 emitted by Android CI for each committed revision.
+ */
+
 package org.beaconcomputinginitiative.bciwhisper.transcription
 
 import android.content.Context
@@ -12,13 +19,23 @@ class TranscriptionEngine(private val context: Context) {
         val transcript: File,
         val text: String,
         val threadsUsed: Int,
-        val resourceMode: ResourceMode
+        val resourceMode: ResourceMode,
+        val sourceSeconds: Double,
+        val inferenceSeconds: Double,
+        val deadAirSkippedSeconds: Double,
+        val activitySeconds: Double,
+        val speechDetected: Boolean,
+        val usedRecorderTimeline: Boolean,
+        val averageNoiseReductionDb: Double,
+        val formantProtectedBins: Long,
+        val harmonicProtectedBins: Long,
+        val speakerCount: Int
     )
 
     enum class ResourceMode {
         CAPTURE_CRITICAL,
         MONITORING,
-        IDLE
+        EXCLUSIVE
     }
 
     fun transcribe(
@@ -27,19 +44,104 @@ class TranscriptionEngine(private val context: Context) {
     ): Result {
         require(wavFile.isFile) { "Recording not found: ${wavFile.name}" }
 
-        val model = ensureModel()
         val pcm = readMonoPcm16Wav(wavFile)
-        val audio16k = resampleTo16k(pcm.samples, pcm.sampleRate)
 
-        val ptr = WhisperNative.initContext(model.absolutePath)
-        require(ptr != 0L) { "whisper.cpp could not load the model" }
+        val plan =
+            TranscriptionAudioPlanner()
+                .plan(
+                    wavFile = wavFile,
+                    samples = pcm.samples,
+                    sampleRate = pcm.sampleRate
+                )
+
+        val outDir =
+            File(
+                context.filesDir,
+                "transcripts"
+            ).apply {
+                mkdirs()
+            }
+
+        val out =
+            File(
+                outDir,
+                wavFile.nameWithoutExtension +
+                    ".txt"
+            )
+
+        if (!plan.speechDetected) {
+            val text =
+                "[No intelligible speech detected]"
+
+            out.writeText(
+                text + "\n"
+            )
+
+            return Result(
+                source = wavFile,
+                transcript = out,
+                text = text,
+                threadsUsed = 0,
+                resourceMode = resourceMode,
+                sourceSeconds = plan.sourceSeconds,
+                inferenceSeconds = 0.0,
+                deadAirSkippedSeconds =
+                    plan.deadAirSkippedSeconds,
+                activitySeconds =
+                    plan.activitySeconds,
+                speechDetected = false,
+                usedRecorderTimeline =
+                    plan.usedRecorderTimeline,
+                averageNoiseReductionDb = 0.0,
+                formantProtectedBins = 0L,
+                harmonicProtectedBins = 0L,
+                speakerCount = 0
+            )
+        }
+
+        val model = ensureModel()
+
+        val audio16k =
+            resampleTo16k(
+                plan.samples,
+                pcm.sampleRate
+            )
+
+        val reconstruction =
+            PhoneticReconstructionEngine()
+                .enhance(
+                    input = audio16k,
+                    sampleRate = 16_000
+                )
+
+        val inferenceAudio =
+            reconstruction.samples
+
+        val ptr =
+            WhisperNative.initContext(
+                model.absolutePath
+            )
+
+        require(ptr != 0L) {
+            "whisper.cpp could not load the model"
+        }
 
         try {
-            // Transcription is intentionally a background workload. Audio capture,
-            // detection, event recording and broadcast are the real-time path.
+            // Transcription yields only when a real-time audio path is active.
+            // In EXCLUSIVE mode, Whisper receives normal foreground CPU
+            // scheduling while nonessential app work is suspended.
             runCatching {
                 Process.setThreadPriority(
-                    Process.THREAD_PRIORITY_BACKGROUND
+                    when (resourceMode) {
+                        ResourceMode.CAPTURE_CRITICAL ->
+                            Process.THREAD_PRIORITY_BACKGROUND
+
+                        ResourceMode.MONITORING ->
+                            Process.THREAD_PRIORITY_BACKGROUND
+
+                        ResourceMode.EXCLUSIVE ->
+                            Process.THREAD_PRIORITY_DEFAULT
+                    }
                 )
             }
 
@@ -48,26 +150,118 @@ class TranscriptionEngine(private val context: Context) {
                     resourceMode
                 )
 
-            val rc = WhisperNative.transcribe(ptr, audio16k, threads)
+            val rc =
+                WhisperNative.transcribe(
+                    ptr,
+                    inferenceAudio,
+                    threads
+                )
             require(rc == 0) { "whisper.cpp transcription failed: $rc" }
 
-            val text = buildString {
-                val count = WhisperNative.segmentCount(ptr)
-                for (i in 0 until count) {
-                    append(WhisperNative.segmentText(ptr, i))
-                }
-            }.trim()
+            val rawSegments =
+                buildList {
+                    val count =
+                        WhisperNative.segmentCount(
+                            ptr
+                        )
 
-            val outDir = File(context.filesDir, "transcripts").apply { mkdirs() }
-            val out = File(outDir, wavFile.nameWithoutExtension + ".txt")
-            out.writeText(text + "\n")
+                    for (
+                        i in
+                        0 until count
+                    ) {
+                        val segmentText =
+                            WhisperNative.segmentText(
+                                ptr,
+                                i
+                            )
+                                .trim()
+
+                        if (
+                            segmentText.isNotBlank()
+                        ) {
+                            add(
+                                SpeakerDiarizer.Segment(
+                                    text = segmentText,
+                                    start10ms =
+                                        WhisperNative.segmentStart10ms(
+                                            ptr,
+                                            i
+                                        ),
+                                    end10ms =
+                                        WhisperNative.segmentEnd10ms(
+                                            ptr,
+                                            i
+                                        )
+                                )
+                            )
+                        }
+                    }
+                }
+
+            val labeledSegments =
+                SpeakerDiarizer(
+                    sampleRate = 16_000
+                )
+                    .label(
+                        audio =
+                            inferenceAudio,
+                        segments =
+                            rawSegments
+                    )
+
+            val decoded =
+                labeledSegments
+                    .joinToString(
+                        separator = "\n"
+                    ) {
+                        "Speaker ${it.speaker}: ${it.text}"
+                    }
+                    .trim()
+
+            val speakerCount =
+                labeledSegments
+                    .maxOfOrNull {
+                        it.speaker
+                    }
+                    ?: 0
+
+            val text =
+                decoded.ifBlank {
+                    "[No intelligible speech detected]"
+                }
+
+            out.writeText(
+                text + "\n"
+            )
 
             return Result(
                 source = wavFile,
                 transcript = out,
                 text = text,
                 threadsUsed = threads,
-                resourceMode = resourceMode
+                resourceMode = resourceMode,
+                sourceSeconds = plan.sourceSeconds,
+                inferenceSeconds =
+                    plan.inferenceSeconds,
+                deadAirSkippedSeconds =
+                    plan.deadAirSkippedSeconds,
+                activitySeconds =
+                    plan.activitySeconds,
+                speechDetected =
+                    decoded.isNotBlank(),
+                usedRecorderTimeline =
+                    plan.usedRecorderTimeline,
+                averageNoiseReductionDb =
+                    reconstruction.metrics
+                        .averageNoiseReductionDb,
+                formantProtectedBins =
+                    reconstruction.metrics
+                        .formantProtectedBins,
+                harmonicProtectedBins =
+                    reconstruction.metrics
+                        .harmonicProtectedBins,
+                speakerCount =
+                    speakerCount
             )
         } finally {
             WhisperNative.freeContext(ptr)
@@ -178,13 +372,10 @@ class TranscriptionEngine(private val context: Context) {
                     else -> 1
                 }
 
-            ResourceMode.IDLE ->
+            ResourceMode.EXCLUSIVE ->
                 maxOf(
                     1,
-                    minOf(
-                        4,
-                        cores / 2
-                    )
+                    cores - 1
                 )
         }
     }

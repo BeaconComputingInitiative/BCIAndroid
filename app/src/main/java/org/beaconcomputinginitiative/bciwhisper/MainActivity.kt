@@ -150,7 +150,15 @@ class MainActivity : Activity() {
     private val poll = object : Runnable {
         override fun run() {
             renderSnapshot()
-            handler.postDelayed(this, 250)
+
+            handler.postDelayed(
+                this,
+                if (transcriptionBusy) {
+                    1_250L
+                } else {
+                    250L
+                }
+            )
         }
     }
 
@@ -548,7 +556,7 @@ class MainActivity : Activity() {
 
         header.addView(
             TextView(this).apply {
-                text = "ANDROID • v6.0 • ALPHA 11"
+                text = "ANDROID • v6.0 • ALPHA 13"
                 textSize = 10f
                 setTextColor(muted)
                 typeface = uiTypeface
@@ -1213,9 +1221,13 @@ class MainActivity : Activity() {
                     "✓ 15-second retained-event rule\n" +
                     "✓ Raw + isolated WAV event recording\n" +
                     "✓ App-private recording library\n" +
-                    "○ Adaptive spectral lock parity pending\n" +
-                    "○ Reconstruction / mastering pending\n" +
-                    "○ Manual transcription pending",
+                    "✓ Adaptive spectral lock with locked-band continuity\n" +
+                    "✓ Voice-aware isolated recording with hum rejection + clarity guards\n" +
+                    "✓ Non-destructive activity timeline for dead-air intelligence\n" +
+                    "✓ Dead-air-aware local transcription planning\n" +
+                    "✓ Neutral local speaker-turn labeling\n" +
+                    "✓ Exclusive compute mode when real-time capture is idle\n" +
+                    "○ Full desktop reconstruction parity still being validated",
                 13f,
                 primaryText
             )
@@ -1594,8 +1606,12 @@ class MainActivity : Activity() {
                     TranscriptionEngine.ResourceMode.MONITORING
 
                 else ->
-                    TranscriptionEngine.ResourceMode.IDLE
+                    TranscriptionEngine.ResourceMode.EXCLUSIVE
             }
+
+        spectrumView?.setSuspended(
+            true
+        )
 
         Toast.makeText(
             this,
@@ -1606,8 +1622,8 @@ class MainActivity : Activity() {
                 TranscriptionEngine.ResourceMode.MONITORING ->
                     "Transcribing with monitoring headroom…"
 
-                TranscriptionEngine.ResourceMode.IDLE ->
-                    "Transcribing locally with whisper.cpp…"
+                TranscriptionEngine.ResourceMode.EXCLUSIVE ->
+                    "Transcribing in exclusive compute mode…"
             },
             Toast.LENGTH_SHORT
         ).show()
@@ -1623,14 +1639,37 @@ class MainActivity : Activity() {
 
             runOnUiThread {
                 transcriptionBusy = false
+                spectrumView?.setSuspended(
+                    false
+                )
                 releaseHeavyCompute(
                     "transcription"
                 )
 
                 result.onSuccess {
+                    val message =
+                        if (!it.speechDetected) {
+                            String.format(
+                                Locale.US,
+                                "No intelligible speech detected • %.1fs dead air skipped",
+                                it.deadAirSkippedSeconds
+                            )
+                        } else {
+                            String.format(
+                                Locale.US,
+                                "Transcript saved: %s • %d Whisper thread(s) • %.1fs dead air skipped • %d speaker label(s) • formant %d • harmonic %d",
+                                it.transcript.name,
+                                it.threadsUsed,
+                                it.deadAirSkippedSeconds,
+                                it.speakerCount,
+                                it.formantProtectedBins,
+                                it.harmonicProtectedBins
+                            )
+                        }
+
                     Toast.makeText(
                         this,
-                        "Transcript saved: ${it.transcript.name} • ${it.threadsUsed} Whisper thread(s)",
+                        message,
                         Toast.LENGTH_LONG
                     ).show()
 
@@ -1681,9 +1720,11 @@ class MainActivity : Activity() {
         summary.addView(
             textView(
                 "Offline transcription uses whisper.cpp with the bundled tiny.en model. " +
-                    "It runs below the real-time audio path, reserves CPU headroom while monitoring, " +
-                    "drops to one Whisper thread during recording/live broadcast, and never runs " +
-                    "inside the capture thread.",
+                    "Recorder activity metadata and fallback energy analysis remove long dead-air " +
+                    "regions only from the inference copy; the preserved WAV remains untouched. " +
+                    "Transcription runs below the real-time audio path, reserves CPU headroom while " +
+                    "monitoring, drops to one Whisper thread during recording/live broadcast, and " +
+                    "never runs inside the capture thread.",
                 11f,
                 muted
             ).apply {
@@ -1924,12 +1965,21 @@ class MainActivity : Activity() {
             snapshot.peakDbfs
         )
 
-        spectrumView?.submit(
-            snapshot.spectrumBands,
-            snapshot.lockLowHz,
-            snapshot.lockHighHz,
-            snapshot.sampleRate
-        )
+        if (transcriptionBusy) {
+            spectrumView?.setSuspended(
+                true
+            )
+        } else {
+            spectrumView?.setSuspended(
+                false
+            )
+            spectrumView?.submit(
+                snapshot.spectrumBands,
+                snapshot.lockLowHz,
+                snapshot.lockHighHz,
+                snapshot.sampleRate
+            )
+        }
 
         detectionText?.text =
             when {

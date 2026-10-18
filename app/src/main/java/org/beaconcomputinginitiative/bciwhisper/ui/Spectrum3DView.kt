@@ -15,6 +15,7 @@ class Spectrum3DView(context: Context) : View(context), Choreographer.FrameCallb
     private val history = Array(depth) { FloatArray(bands) }
 
     private var running = false
+    private var suspended = false
     private var phase = 0f
     private var lastFrameNanos = 0L
     private var lockLowHz = 0f
@@ -45,6 +46,24 @@ class Spectrum3DView(context: Context) : View(context), Choreographer.FrameCallb
         contentDescription = "Animated three dimensional audio spectrum"
     }
 
+    fun setSuspended(
+        value: Boolean
+    ) {
+        suspended = value
+
+        if (suspended) {
+            running = false
+            Choreographer
+                .getInstance()
+                .removeFrameCallback(this)
+        } else if (!running) {
+            running = true
+            Choreographer
+                .getInstance()
+                .postFrameCallback(this)
+        }
+    }
+
     fun submit(
         values: FloatArray,
         lockLowHz: Double,
@@ -61,7 +80,7 @@ class Spectrum3DView(context: Context) : View(context), Choreographer.FrameCallb
         this.lockHighHz = lockHighHz.toFloat()
         this.sampleRate = sampleRate.toFloat()
 
-        if (!running) {
+        if (!suspended && !running) {
             running = true
             Choreographer.getInstance().postFrameCallback(this)
         }
@@ -74,7 +93,7 @@ class Spectrum3DView(context: Context) : View(context), Choreographer.FrameCallb
     }
 
     override fun doFrame(frameTimeNanos: Long) {
-        if (!running) return
+        if (!running || suspended) return
 
         val dt = if (lastFrameNanos == 0L) {
             1f / 60f

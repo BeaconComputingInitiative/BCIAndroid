@@ -1,3 +1,10 @@
+/*
+ * BEACON COMPUTING INITIATIVE
+ * BCIAndroid Whisper JNI Bridge
+ * Developer Seal: CJB-DEV-2026
+ * Integrity: SHA-256 emitted by Android CI for each committed revision.
+ */
+
 #include <jni.h>
 #include <android/log.h>
 #include <stdlib.h>
@@ -70,4 +77,21 @@ Java_org_beaconcomputinginitiative_bciwhisper_transcription_WhisperNative_segmen
     struct whisper_context *ctx = ctx_from(ptr);
     const char *text = ctx ? whisper_full_get_segment_text(ctx, index) : "";
     return (*env)->NewStringUTF(env, text);
+}
+
+
+JNIEXPORT jlong JNICALL
+Java_org_beaconcomputinginitiative_bciwhisper_transcription_WhisperNative_segmentStart10ms(
+        JNIEnv *env, jobject thiz, jlong ptr, jint index) {
+    (void) env; (void) thiz;
+    struct whisper_context *ctx = ctx_from(ptr);
+    return ctx ? (jlong) whisper_full_get_segment_t0(ctx, index) : 0;
+}
+
+JNIEXPORT jlong JNICALL
+Java_org_beaconcomputinginitiative_bciwhisper_transcription_WhisperNative_segmentEnd10ms(
+        JNIEnv *env, jobject thiz, jlong ptr, jint index) {
+    (void) env; (void) thiz;
+    struct whisper_context *ctx = ctx_from(ptr);
+    return ctx ? (jlong) whisper_full_get_segment_t1(ctx, index) : 0;
 }
