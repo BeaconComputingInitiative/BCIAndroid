@@ -359,10 +359,10 @@ class VoiceIsolationProcessor(
             0.18
 
         private const val GATE_ATTACK =
-            0.018
+            0.008
 
         private const val GATE_RELEASE =
-            0.0015
+            0.00006
 
         private const val Q_BUTTERWORTH =
             0.70710678
