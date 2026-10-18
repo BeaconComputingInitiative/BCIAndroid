@@ -1,3 +1,10 @@
+/*
+ * BEACON COMPUTING INITIATIVE
+ * BCIAndroid Intelligent Event Recorder
+ * Developer Seal: CJB-DEV-2026
+ * Integrity: SHA-256 emitted by Android CI for each committed revision.
+ */
+
 package org.beaconcomputinginitiative.bciwhisper.audio
 
 import java.io.File
@@ -28,7 +35,12 @@ class EventRecorder(
     private var lockedFrames = 0L
     private var releaseFrames = 0L
     private val filter =
-        AdaptiveLockIsolationFilter(
+        VoiceIsolationProcessor(
+            sampleRate
+        )
+
+    private val activityTimeline =
+        RecordingActivityTimeline(
             sampleRate
         )
 
@@ -93,6 +105,8 @@ class EventRecorder(
             lockHighHz
         )
 
+        activityTimeline.reset()
+
         if (
             preRoll != null &&
             preRoll.isNotEmpty()
@@ -131,8 +145,15 @@ class EventRecorder(
                 block,
                 n,
                 lockLowHz,
-                lockHighHz
+                lockHighHz,
+                signalActive
             )
+
+        activityTimeline.process(
+            isolated,
+            isolated.size,
+            signalActive
+        )
 
         isolatedWriter?.write(
             isolated,
@@ -177,10 +198,21 @@ class EventRecorder(
             locked >=
                 MIN_SAVED_LOCK_SECONDS
 
-        if (!keep) {
+        if (keep && isolated != null) {
+            runCatching {
+                activityTimeline.writeManifest(
+                    isolatedFile = isolated,
+                    totalFrames = totalFrames,
+                    lockedFrames = lockedFrames,
+                    reason = reason
+                )
+            }
+        } else {
             raw?.delete()
             isolated?.delete()
         }
+
+        activityTimeline.reset()
 
         rawFile = null
         isolatedFile = null
@@ -223,6 +255,8 @@ class EventRecorder(
 
         raw?.delete()
         isolated?.delete()
+
+        activityTimeline.reset()
 
         rawFile = null
         isolatedFile = null
