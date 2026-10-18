@@ -98,13 +98,17 @@ class RecordingActivityTimeline(
                 dbfs >= threshold &&
                     dbfs >= ABSOLUTE_MIN_ACTIVITY_DBFS
 
+            val meaningfulActivity =
+                spectralSignalActive ||
+                    energyActive
+
             val chunkStart =
                 cursorFrames
 
             val chunkEnd =
                 cursorFrames + chunk
 
-            if (energyActive) {
+            if (meaningfulActivity) {
                 if (activeStartFrame == null) {
                     activeStartFrame =
                         chunkStart
@@ -133,8 +137,15 @@ class RecordingActivityTimeline(
                                 NOISE_FLOOR_MAX_STEP_DB
                             )
 
+                    val smoothing =
+                        if (delta < 0.0) {
+                            NOISE_FLOOR_FAST_DOWN
+                        } else {
+                            NOISE_FLOOR_SMOOTHING
+                        }
+
                     noiseFloorDbfs +=
-                        NOISE_FLOOR_SMOOTHING *
+                        smoothing *
                             delta
                 }
             }
@@ -359,6 +370,9 @@ class RecordingActivityTimeline(
 
         private const val NOISE_FLOOR_SMOOTHING =
             0.025
+
+        private const val NOISE_FLOOR_FAST_DOWN =
+            0.22
 
         private const val NOISE_FLOOR_MAX_STEP_DB =
             8.0
