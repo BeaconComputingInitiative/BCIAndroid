@@ -28,7 +28,8 @@ class TranscriptionEngine(private val context: Context) {
         val usedRecorderTimeline: Boolean,
         val averageNoiseReductionDb: Double,
         val formantProtectedBins: Long,
-        val harmonicProtectedBins: Long
+        val harmonicProtectedBins: Long,
+        val speakerCount: Int
     )
 
     enum class ResourceMode {
@@ -93,7 +94,8 @@ class TranscriptionEngine(private val context: Context) {
                     plan.usedRecorderTimeline,
                 averageNoiseReductionDb = 0.0,
                 formantProtectedBins = 0L,
-                harmonicProtectedBins = 0L
+                harmonicProtectedBins = 0L,
+                speakerCount = 0
             )
         }
 
@@ -156,23 +158,72 @@ class TranscriptionEngine(private val context: Context) {
                 )
             require(rc == 0) { "whisper.cpp transcription failed: $rc" }
 
-            val decoded =
-                buildString {
+            val rawSegments =
+                buildList {
                     val count =
                         WhisperNative.segmentCount(
                             ptr
                         )
 
-                    for (i in 0 until count) {
-                        append(
+                    for (
+                        i in
+                        0 until count
+                    ) {
+                        val segmentText =
                             WhisperNative.segmentText(
                                 ptr,
                                 i
                             )
-                        )
+                                .trim()
+
+                        if (
+                            segmentText.isNotBlank()
+                        ) {
+                            add(
+                                SpeakerDiarizer.Segment(
+                                    text = segmentText,
+                                    start10ms =
+                                        WhisperNative.segmentStart10ms(
+                                            ptr,
+                                            i
+                                        ),
+                                    end10ms =
+                                        WhisperNative.segmentEnd10ms(
+                                            ptr,
+                                            i
+                                        )
+                                )
+                            )
+                        }
                     }
                 }
+
+            val labeledSegments =
+                SpeakerDiarizer(
+                    sampleRate = 16_000
+                )
+                    .label(
+                        audio =
+                            inferenceAudio,
+                        segments =
+                            rawSegments
+                    )
+
+            val decoded =
+                labeledSegments
+                    .joinToString(
+                        separator = "\n"
+                    ) {
+                        "Speaker ${it.speaker}: ${it.text}"
+                    }
                     .trim()
+
+            val speakerCount =
+                labeledSegments
+                    .maxOfOrNull {
+                        it.speaker
+                    }
+                    ?: 0
 
             val text =
                 decoded.ifBlank {
@@ -208,7 +259,9 @@ class TranscriptionEngine(private val context: Context) {
                         .formantProtectedBins,
                 harmonicProtectedBins =
                     reconstruction.metrics
-                        .harmonicProtectedBins
+                        .harmonicProtectedBins,
+                speakerCount =
+                    speakerCount
             )
         } finally {
             WhisperNative.freeContext(ptr)
