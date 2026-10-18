@@ -18,7 +18,9 @@ import kotlin.math.sin
  *
  * Raw recording is never processed by this class. The spectral lock controls
  * the isolation window, while speech-preservation guards keep the fundamental,
- * formant, and articulation regions from being narrowed away.
+ * vowel-formant, consonant-burst, fricative, and articulation regions from
+ * being narrowed away. This is intentionally conservative: phonetic evidence
+ * is preserved before interference suppression is allowed to act.
  */
 class VoiceIsolationProcessor(
     private val sampleRate: Int
@@ -219,8 +221,9 @@ class VoiceIsolationProcessor(
             lockHighHz +
                 HIGH_GUARD_HZ
 
-        // Preserve upper formants and consonant energy even when the lock
-        // candidate itself is narrower.
+        // Preserve upper formants, consonant bursts, and high-frequency
+        // frication even when the lock candidate itself is narrower. Those
+        // cues materially affect phoneme and accent/dialect discrimination.
         return maxOf(
             lockTarget,
             SPEECH_ARTICULATION_GUARD_HZ
@@ -312,7 +315,7 @@ class VoiceIsolationProcessor(
             180.0
 
         private const val SPEECH_ARTICULATION_GUARD_HZ =
-            5200.0
+            7600.0
 
         private const val LOW_GUARD_HZ =
             90.0
@@ -342,7 +345,7 @@ class VoiceIsolationProcessor(
             0.95
 
         private const val PRESENCE_GAIN_DB =
-            1.8
+            1.2
 
         private const val AIR_HZ =
             5600.0
@@ -351,7 +354,7 @@ class VoiceIsolationProcessor(
             0.75
 
         private const val AIR_GAIN_DB =
-            0.8
+            0.4
 
         // Dead air is reduced, not muted. Keeping a residual floor avoids
         // abrupt gates and preserves natural word tails for later analysis.
