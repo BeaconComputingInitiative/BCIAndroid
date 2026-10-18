@@ -1,3 +1,10 @@
+/*
+ * BEACON COMPUTING INITIATIVE
+ * BCIAndroid Dead-Air-Aware Transcription Engine
+ * Developer Seal: CJB-DEV-2026
+ * Integrity: SHA-256 emitted by Android CI for each committed revision.
+ */
+
 package org.beaconcomputinginitiative.bciwhisper.transcription
 
 import android.content.Context
@@ -12,7 +19,13 @@ class TranscriptionEngine(private val context: Context) {
         val transcript: File,
         val text: String,
         val threadsUsed: Int,
-        val resourceMode: ResourceMode
+        val resourceMode: ResourceMode,
+        val sourceSeconds: Double,
+        val inferenceSeconds: Double,
+        val deadAirSkippedSeconds: Double,
+        val activitySeconds: Double,
+        val speechDetected: Boolean,
+        val usedRecorderTimeline: Boolean
     )
 
     enum class ResourceMode {
@@ -27,12 +40,73 @@ class TranscriptionEngine(private val context: Context) {
     ): Result {
         require(wavFile.isFile) { "Recording not found: ${wavFile.name}" }
 
-        val model = ensureModel()
         val pcm = readMonoPcm16Wav(wavFile)
-        val audio16k = resampleTo16k(pcm.samples, pcm.sampleRate)
 
-        val ptr = WhisperNative.initContext(model.absolutePath)
-        require(ptr != 0L) { "whisper.cpp could not load the model" }
+        val plan =
+            TranscriptionAudioPlanner()
+                .plan(
+                    wavFile = wavFile,
+                    samples = pcm.samples,
+                    sampleRate = pcm.sampleRate
+                )
+
+        val outDir =
+            File(
+                context.filesDir,
+                "transcripts"
+            ).apply {
+                mkdirs()
+            }
+
+        val out =
+            File(
+                outDir,
+                wavFile.nameWithoutExtension +
+                    ".txt"
+            )
+
+        if (!plan.speechDetected) {
+            val text =
+                "[No intelligible speech detected]"
+
+            out.writeText(
+                text + "\n"
+            )
+
+            return Result(
+                source = wavFile,
+                transcript = out,
+                text = text,
+                threadsUsed = 0,
+                resourceMode = resourceMode,
+                sourceSeconds = plan.sourceSeconds,
+                inferenceSeconds = 0.0,
+                deadAirSkippedSeconds =
+                    plan.deadAirSkippedSeconds,
+                activitySeconds =
+                    plan.activitySeconds,
+                speechDetected = false,
+                usedRecorderTimeline =
+                    plan.usedRecorderTimeline
+            )
+        }
+
+        val model = ensureModel()
+
+        val audio16k =
+            resampleTo16k(
+                plan.samples,
+                pcm.sampleRate
+            )
+
+        val ptr =
+            WhisperNative.initContext(
+                model.absolutePath
+            )
+
+        require(ptr != 0L) {
+            "whisper.cpp could not load the model"
+        }
 
         try {
             // Transcription is intentionally a background workload. Audio capture,
@@ -51,23 +125,50 @@ class TranscriptionEngine(private val context: Context) {
             val rc = WhisperNative.transcribe(ptr, audio16k, threads)
             require(rc == 0) { "whisper.cpp transcription failed: $rc" }
 
-            val text = buildString {
-                val count = WhisperNative.segmentCount(ptr)
-                for (i in 0 until count) {
-                    append(WhisperNative.segmentText(ptr, i))
-                }
-            }.trim()
+            val decoded =
+                buildString {
+                    val count =
+                        WhisperNative.segmentCount(
+                            ptr
+                        )
 
-            val outDir = File(context.filesDir, "transcripts").apply { mkdirs() }
-            val out = File(outDir, wavFile.nameWithoutExtension + ".txt")
-            out.writeText(text + "\n")
+                    for (i in 0 until count) {
+                        append(
+                            WhisperNative.segmentText(
+                                ptr,
+                                i
+                            )
+                        )
+                    }
+                }
+                    .trim()
+
+            val text =
+                decoded.ifBlank {
+                    "[No intelligible speech detected]"
+                }
+
+            out.writeText(
+                text + "\n"
+            )
 
             return Result(
                 source = wavFile,
                 transcript = out,
                 text = text,
                 threadsUsed = threads,
-                resourceMode = resourceMode
+                resourceMode = resourceMode,
+                sourceSeconds = plan.sourceSeconds,
+                inferenceSeconds =
+                    plan.inferenceSeconds,
+                deadAirSkippedSeconds =
+                    plan.deadAirSkippedSeconds,
+                activitySeconds =
+                    plan.activitySeconds,
+                speechDetected =
+                    decoded.isNotBlank(),
+                usedRecorderTimeline =
+                    plan.usedRecorderTimeline
             )
         } finally {
             WhisperNative.freeContext(ptr)
