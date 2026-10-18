@@ -312,7 +312,7 @@ class VoiceIsolationProcessor(
             3600.0
 
         private const val SPEECH_FUNDAMENTAL_GUARD_HZ =
-            180.0
+            95.0
 
         private const val SPEECH_ARTICULATION_GUARD_HZ =
             7600.0
