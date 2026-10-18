@@ -84,10 +84,19 @@ jobs:
           sha256sum \
             app/src/main/java/org/beaconcomputinginitiative/bciwhisper/MainActivity.kt \
             app/src/main/java/org/beaconcomputinginitiative/bciwhisper/audio/AudioMonitorService.kt \
+            app/src/main/java/org/beaconcomputinginitiative/bciwhisper/audio/DetectionEngine.kt \
+            app/src/main/java/org/beaconcomputinginitiative/bciwhisper/audio/EventRecorder.kt \
+            app/src/main/java/org/beaconcomputinginitiative/bciwhisper/audio/RecordingActivityTimeline.kt \
+            app/src/main/java/org/beaconcomputinginitiative/bciwhisper/audio/VoiceIsolationProcessor.kt \
+            app/src/main/java/org/beaconcomputinginitiative/bciwhisper/transcription/TranscriptionAudioPlanner.kt \
+            app/src/main/java/org/beaconcomputinginitiative/bciwhisper/transcription/TranscriptionEngine.kt \
             app/src/main/java/org/beaconcomputinginitiative/bciwhisper/broadcast/BroadcastConfig.kt \
             app/src/main/java/org/beaconcomputinginitiative/bciwhisper/broadcast/BroadcastPublisher.kt \
             app/src/main/java/org/beaconcomputinginitiative/bciwhisper/broadcast/PublisherCredentialStore.kt \
             app/build.gradle.kts
+
+      - name: Run JVM regression tests
+        run: gradle --no-daemon --stacktrace :app:testDebugUnitTest
 
       - name: Build debug APK
         run: gradle --no-daemon --stacktrace :app:assembleDebug
@@ -136,16 +145,16 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          cp app/build/outputs/apk/debug/app-debug.apk             out/BCIWhisper-v6.0-Android-alpha12-debug.apk
+          cp app/build/outputs/apk/debug/app-debug.apk             out/BCIWhisper-v6.0-Android-alpha13-debug.apk
           (
             cd out
-            sha256sum BCIWhisper-v6.0-Android-alpha12-debug.apk               > BCIWhisper-v6.0-Android-alpha12-debug.apk.sha256
+            sha256sum BCIWhisper-v6.0-Android-alpha13-debug.apk               > BCIWhisper-v6.0-Android-alpha13-debug.apk.sha256
           )
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: BCIWhisper-Android-alpha12
+          name: BCIWhisper-Android-alpha13
           path: out/*
           if-no-files-found: error
           retention-days: 14
