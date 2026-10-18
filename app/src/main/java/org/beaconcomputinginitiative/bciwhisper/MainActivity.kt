@@ -1225,6 +1225,8 @@ class MainActivity : Activity() {
                     "✓ Voice-aware isolated recording with hum rejection + clarity guards\n" +
                     "✓ Non-destructive activity timeline for dead-air intelligence\n" +
                     "✓ Dead-air-aware local transcription planning\n" +
+                    "✓ Neutral local speaker-turn labeling\n" +
+                    "✓ Exclusive compute mode when real-time capture is idle\n" +
                     "○ Full desktop reconstruction parity still being validated",
                 13f,
                 primaryText
@@ -1655,10 +1657,11 @@ class MainActivity : Activity() {
                         } else {
                             String.format(
                                 Locale.US,
-                                "Transcript saved: %s • %d Whisper thread(s) • %.1fs dead air skipped • formant %d • harmonic %d",
+                                "Transcript saved: %s • %d Whisper thread(s) • %.1fs dead air skipped • %d speaker label(s) • formant %d • harmonic %d",
                                 it.transcript.name,
                                 it.threadsUsed,
                                 it.deadAirSkippedSeconds,
+                                it.speakerCount,
                                 it.formantProtectedBins,
                                 it.harmonicProtectedBins
                             )
