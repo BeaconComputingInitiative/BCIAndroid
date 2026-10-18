@@ -548,7 +548,7 @@ class MainActivity : Activity() {
 
         header.addView(
             TextView(this).apply {
-                text = "ANDROID • v6.0 • ALPHA 11"
+                text = "ANDROID • v6.0 • ALPHA 13"
                 textSize = 10f
                 setTextColor(muted)
                 typeface = uiTypeface
@@ -1640,10 +1640,12 @@ class MainActivity : Activity() {
                         } else {
                             String.format(
                                 Locale.US,
-                                "Transcript saved: %s • %d Whisper thread(s) • %.1fs dead air skipped",
+                                "Transcript saved: %s • %d Whisper thread(s) • %.1fs dead air skipped • formant %d • harmonic %d",
                                 it.transcript.name,
                                 it.threadsUsed,
-                                it.deadAirSkippedSeconds
+                                it.deadAirSkippedSeconds,
+                                it.formantProtectedBins,
+                                it.harmonicProtectedBins
                             )
                         }
 
