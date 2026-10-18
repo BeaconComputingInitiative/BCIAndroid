@@ -34,7 +34,7 @@ class TranscriptionEngine(private val context: Context) {
     enum class ResourceMode {
         CAPTURE_CRITICAL,
         MONITORING,
-        IDLE
+        EXCLUSIVE
     }
 
     fun transcribe(
@@ -125,11 +125,21 @@ class TranscriptionEngine(private val context: Context) {
         }
 
         try {
-            // Transcription is intentionally a background workload. Audio capture,
-            // detection, event recording and broadcast are the real-time path.
+            // Transcription yields only when a real-time audio path is active.
+            // In EXCLUSIVE mode, Whisper receives normal foreground CPU
+            // scheduling while nonessential app work is suspended.
             runCatching {
                 Process.setThreadPriority(
-                    Process.THREAD_PRIORITY_BACKGROUND
+                    when (resourceMode) {
+                        ResourceMode.CAPTURE_CRITICAL ->
+                            Process.THREAD_PRIORITY_BACKGROUND
+
+                        ResourceMode.MONITORING ->
+                            Process.THREAD_PRIORITY_BACKGROUND
+
+                        ResourceMode.EXCLUSIVE ->
+                            Process.THREAD_PRIORITY_DEFAULT
+                    }
                 )
             }
 
@@ -309,13 +319,10 @@ class TranscriptionEngine(private val context: Context) {
                     else -> 1
                 }
 
-            ResourceMode.IDLE ->
+            ResourceMode.EXCLUSIVE ->
                 maxOf(
                     1,
-                    minOf(
-                        4,
-                        cores / 2
-                    )
+                    cores - 1
                 )
         }
     }
