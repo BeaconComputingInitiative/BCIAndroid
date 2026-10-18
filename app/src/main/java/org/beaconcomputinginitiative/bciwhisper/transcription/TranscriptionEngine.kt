@@ -25,7 +25,10 @@ class TranscriptionEngine(private val context: Context) {
         val deadAirSkippedSeconds: Double,
         val activitySeconds: Double,
         val speechDetected: Boolean,
-        val usedRecorderTimeline: Boolean
+        val usedRecorderTimeline: Boolean,
+        val averageNoiseReductionDb: Double,
+        val formantProtectedBins: Long,
+        val harmonicProtectedBins: Long
     )
 
     enum class ResourceMode {
@@ -87,7 +90,10 @@ class TranscriptionEngine(private val context: Context) {
                     plan.activitySeconds,
                 speechDetected = false,
                 usedRecorderTimeline =
-                    plan.usedRecorderTimeline
+                    plan.usedRecorderTimeline,
+                averageNoiseReductionDb = 0.0,
+                formantProtectedBins = 0L,
+                harmonicProtectedBins = 0L
             )
         }
 
@@ -98,6 +104,16 @@ class TranscriptionEngine(private val context: Context) {
                 plan.samples,
                 pcm.sampleRate
             )
+
+        val reconstruction =
+            PhoneticReconstructionEngine()
+                .enhance(
+                    input = audio16k,
+                    sampleRate = 16_000
+                )
+
+        val inferenceAudio =
+            reconstruction.samples
 
         val ptr =
             WhisperNative.initContext(
@@ -122,7 +138,12 @@ class TranscriptionEngine(private val context: Context) {
                     resourceMode
                 )
 
-            val rc = WhisperNative.transcribe(ptr, audio16k, threads)
+            val rc =
+                WhisperNative.transcribe(
+                    ptr,
+                    inferenceAudio,
+                    threads
+                )
             require(rc == 0) { "whisper.cpp transcription failed: $rc" }
 
             val decoded =
@@ -168,7 +189,16 @@ class TranscriptionEngine(private val context: Context) {
                 speechDetected =
                     decoded.isNotBlank(),
                 usedRecorderTimeline =
-                    plan.usedRecorderTimeline
+                    plan.usedRecorderTimeline,
+                averageNoiseReductionDb =
+                    reconstruction.metrics
+                        .averageNoiseReductionDb,
+                formantProtectedBins =
+                    reconstruction.metrics
+                        .formantProtectedBins,
+                harmonicProtectedBins =
+                    reconstruction.metrics
+                        .harmonicProtectedBins
             )
         } finally {
             WhisperNative.freeContext(ptr)
