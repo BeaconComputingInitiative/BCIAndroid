@@ -313,6 +313,11 @@ class SpeakerDiarizer(
         var sampleCount =
             0L
 
+        val fft =
+            DoubleFFT_1D(
+                FFT_SIZE.toLong()
+            )
+
         var offset =
             start
 
@@ -389,12 +394,9 @@ class SpeakerDiarizer(
                 }
             }
 
-            DoubleFFT_1D(
-                FFT_SIZE.toLong()
+            fft.realForwardFull(
+                frame
             )
-                .realForwardFull(
-                    frame
-                )
 
             for (
                 bin in
