@@ -150,7 +150,15 @@ class MainActivity : Activity() {
     private val poll = object : Runnable {
         override fun run() {
             renderSnapshot()
-            handler.postDelayed(this, 250)
+
+            handler.postDelayed(
+                this,
+                if (transcriptionBusy) {
+                    1_250L
+                } else {
+                    250L
+                }
+            )
         }
     }
 
@@ -1596,8 +1604,12 @@ class MainActivity : Activity() {
                     TranscriptionEngine.ResourceMode.MONITORING
 
                 else ->
-                    TranscriptionEngine.ResourceMode.IDLE
+                    TranscriptionEngine.ResourceMode.EXCLUSIVE
             }
+
+        spectrumView?.setSuspended(
+            true
+        )
 
         Toast.makeText(
             this,
@@ -1608,8 +1620,8 @@ class MainActivity : Activity() {
                 TranscriptionEngine.ResourceMode.MONITORING ->
                     "Transcribing with monitoring headroom…"
 
-                TranscriptionEngine.ResourceMode.IDLE ->
-                    "Transcribing locally with whisper.cpp…"
+                TranscriptionEngine.ResourceMode.EXCLUSIVE ->
+                    "Transcribing in exclusive compute mode…"
             },
             Toast.LENGTH_SHORT
         ).show()
@@ -1625,6 +1637,9 @@ class MainActivity : Activity() {
 
             runOnUiThread {
                 transcriptionBusy = false
+                spectrumView?.setSuspended(
+                    false
+                )
                 releaseHeavyCompute(
                     "transcription"
                 )
@@ -1947,12 +1962,21 @@ class MainActivity : Activity() {
             snapshot.peakDbfs
         )
 
-        spectrumView?.submit(
-            snapshot.spectrumBands,
-            snapshot.lockLowHz,
-            snapshot.lockHighHz,
-            snapshot.sampleRate
-        )
+        if (transcriptionBusy) {
+            spectrumView?.setSuspended(
+                true
+            )
+        } else {
+            spectrumView?.setSuspended(
+                false
+            )
+            spectrumView?.submit(
+                snapshot.spectrumBands,
+                snapshot.lockLowHz,
+                snapshot.lockHighHz,
+                snapshot.sampleRate
+            )
+        }
 
         detectionText?.text =
             when {
