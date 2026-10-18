@@ -1213,9 +1213,11 @@ class MainActivity : Activity() {
                     "✓ 15-second retained-event rule\n" +
                     "✓ Raw + isolated WAV event recording\n" +
                     "✓ App-private recording library\n" +
-                    "○ Adaptive spectral lock parity pending\n" +
-                    "○ Reconstruction / mastering pending\n" +
-                    "○ Manual transcription pending",
+                    "✓ Adaptive spectral lock with locked-band continuity\n" +
+                    "✓ Voice-aware isolated recording with hum rejection + clarity guards\n" +
+                    "✓ Non-destructive activity timeline for dead-air intelligence\n" +
+                    "✓ Dead-air-aware local transcription planning\n" +
+                    "○ Full desktop reconstruction parity still being validated",
                 13f,
                 primaryText
             )
@@ -1628,9 +1630,26 @@ class MainActivity : Activity() {
                 )
 
                 result.onSuccess {
+                    val message =
+                        if (!it.speechDetected) {
+                            String.format(
+                                Locale.US,
+                                "No intelligible speech detected • %.1fs dead air skipped",
+                                it.deadAirSkippedSeconds
+                            )
+                        } else {
+                            String.format(
+                                Locale.US,
+                                "Transcript saved: %s • %d Whisper thread(s) • %.1fs dead air skipped",
+                                it.transcript.name,
+                                it.threadsUsed,
+                                it.deadAirSkippedSeconds
+                            )
+                        }
+
                     Toast.makeText(
                         this,
-                        "Transcript saved: ${it.transcript.name} • ${it.threadsUsed} Whisper thread(s)",
+                        message,
                         Toast.LENGTH_LONG
                     ).show()
 
@@ -1681,9 +1700,11 @@ class MainActivity : Activity() {
         summary.addView(
             textView(
                 "Offline transcription uses whisper.cpp with the bundled tiny.en model. " +
-                    "It runs below the real-time audio path, reserves CPU headroom while monitoring, " +
-                    "drops to one Whisper thread during recording/live broadcast, and never runs " +
-                    "inside the capture thread.",
+                    "Recorder activity metadata and fallback energy analysis remove long dead-air " +
+                    "regions only from the inference copy; the preserved WAV remains untouched. " +
+                    "Transcription runs below the real-time audio path, reserves CPU headroom while " +
+                    "monitoring, drops to one Whisper thread during recording/live broadcast, and " +
+                    "never runs inside the capture thread.",
                 11f,
                 muted
             ).apply {
