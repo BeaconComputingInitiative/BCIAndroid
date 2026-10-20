@@ -92,6 +92,7 @@ jobs:
             app/src/main/java/org/beaconcomputinginitiative/bciwhisper/transcription/PhoneticReconstructionEngine.kt \
             app/src/main/java/org/beaconcomputinginitiative/bciwhisper/transcription/SpeakerDiarizer.kt \
             app/src/main/java/org/beaconcomputinginitiative/bciwhisper/transcription/TranscriptionEngine.kt \
+            app/src/main/java/org/beaconcomputinginitiative/bciwhisper/transcription/TranscriptionQualityGate.kt \
             app/src/main/java/org/beaconcomputinginitiative/bciwhisper/transcription/WhisperNative.kt \
             app/src/main/java/org/beaconcomputinginitiative/bciwhisper/ui/Spectrum3DView.kt \
             app/src/main/cpp/whisper/jni.c \
@@ -150,16 +151,16 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          cp app/build/outputs/apk/debug/app-debug.apk             out/BCIWhisper-v6.0-Android-alpha13-debug.apk
+          cp app/build/outputs/apk/debug/app-debug.apk             out/BCIWhisper-v6.0-Android-alpha14-debug.apk
           (
             cd out
-            sha256sum BCIWhisper-v6.0-Android-alpha13-debug.apk               > BCIWhisper-v6.0-Android-alpha13-debug.apk.sha256
+            sha256sum BCIWhisper-v6.0-Android-alpha14-debug.apk               > BCIWhisper-v6.0-Android-alpha14-debug.apk.sha256
           )
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: BCIWhisper-Android-alpha13
+          name: BCIWhisper-Android-alpha14
           path: out/*
           if-no-files-found: error
           retention-days: 14
