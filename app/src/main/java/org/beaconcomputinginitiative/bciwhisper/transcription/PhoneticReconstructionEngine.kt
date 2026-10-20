@@ -67,18 +67,7 @@ class PhoneticReconstructionEngine {
             )
 
         val window =
-            DoubleArray(
-                NFFT
-            ) { i ->
-                0.5 -
-                    0.5 *
-                    cos(
-                        2.0 *
-                            PI *
-                            i /
-                            (NFFT - 1)
-                    )
-            }
+            HANN_WINDOW
 
         val frameCount =
             1 +
@@ -519,34 +508,60 @@ class PhoneticReconstructionEngine {
                 bins
             )
 
+        val sampledFrames =
+            (
+                powers.size +
+                    NOISE_FRAME_STRIDE -
+                    1
+                ) /
+                NOISE_FRAME_STRIDE
+
         val scratch =
             DoubleArray(
-                powers.size
+                sampledFrames
             )
 
         for (
             bin in
             0 until bins
         ) {
-            for (
-                frame in
-                powers.indices
+            var sample =
+                0
+
+            var frame =
+                0
+
+            while (
+                frame <
+                powers.size
             ) {
-                scratch[frame] =
+                scratch[sample] =
                     powers[frame][bin]
+
+                sample++
+                frame +=
+                    NOISE_FRAME_STRIDE
             }
 
-            scratch.sort()
+            java.util.Arrays.sort(
+                scratch,
+                0,
+                sample
+            )
 
             val index =
                 (
-                    scratch.lastIndex *
+                    (
+                        sample -
+                            1
+                        ) *
                         NOISE_PERCENTILE
                     )
                     .toInt()
                     .coerceIn(
                         0,
-                        scratch.lastIndex
+                        sample -
+                            1
                     )
 
             noise[bin] =
@@ -779,35 +794,35 @@ class PhoneticReconstructionEngine {
             bin in
             0 until bins
         ) {
-            val omega =
-                2.0 *
-                    PI *
-                    bin /
-                    NFFT
-
             var real =
                 0.0
 
             var imag =
                 0.0
 
+            val cosRow =
+                LPC_COS_BASIS[bin]
+
+            val sinRow =
+                LPC_SIN_BASIS[bin]
+
+            val order =
+                minOf(
+                    coefficients.size,
+                    cosRow.size
+                )
+
             for (
                 k in
-                coefficients.indices
+                0 until order
             ) {
                 real +=
                     coefficients[k] *
-                        cos(
-                            omega *
-                                k
-                        )
+                        cosRow[k]
 
                 imag -=
                     coefficients[k] *
-                        sin(
-                            omega *
-                                k
-                        )
+                        sinRow[k]
             }
 
             val magnitudeSquared =
@@ -872,24 +887,54 @@ class PhoneticReconstructionEngine {
             return 0.0
         }
 
-        val speechValues =
+        val histogram =
+            IntArray(
+                ENVELOPE_HISTOGRAM_BINS
+            )
+
+        var count =
+            0
+
+        for (
+            value in
             values
-                .filter {
-                    it >
-                        0.0
-                }
-                .sorted()
+        ) {
+            if (
+                value <=
+                0.0
+            ) {
+                continue
+            }
+
+            val bucket =
+                (
+                    value
+                        .coerceIn(
+                            0.0,
+                            1.0
+                        ) *
+                        (
+                            ENVELOPE_HISTOGRAM_BINS -
+                                1
+                            )
+                    )
+                    .toInt()
+
+            histogram[bucket]++
+            count++
+        }
 
         if (
-            speechValues.isEmpty()
+            count ==
+            0
         ) {
             return 1.0
         }
 
-        val index =
+        val target =
             (
                 (
-                    speechValues.size -
+                    count -
                         1
                     ) *
                     q
@@ -897,12 +942,33 @@ class PhoneticReconstructionEngine {
                 .toInt()
                 .coerceIn(
                     0,
-                    speechValues.lastIndex
+                    count -
+                        1
                 )
 
-        return speechValues[
-            index
-        ]
+        var cumulative =
+            0
+
+        for (
+            bucket in
+            histogram.indices
+        ) {
+            cumulative +=
+                histogram[bucket]
+
+            if (
+                cumulative >
+                target
+            ) {
+                return bucket.toDouble() /
+                    (
+                        ENVELOPE_HISTOGRAM_BINS -
+                            1
+                        )
+            }
+        }
+
+        return 1.0
     }
 
     private fun rmsDbfs(
@@ -967,6 +1033,12 @@ class PhoneticReconstructionEngine {
         private const val NOISE_PERCENTILE =
             0.18
 
+        private const val NOISE_FRAME_STRIDE =
+            4
+
+        private const val ENVELOPE_HISTOGRAM_BINS =
+            64
+
         private const val WIENER_OVERSUBTRACT =
             1.10
 
@@ -1008,5 +1080,62 @@ class PhoneticReconstructionEngine {
 
         private const val MIN_POWER =
             1e-14
+
+        private val HANN_WINDOW =
+            DoubleArray(
+                NFFT
+            ) { i ->
+                0.5 -
+                    0.5 *
+                    cos(
+                        2.0 *
+                            PI *
+                            i /
+                            (
+                                NFFT -
+                                    1
+                                )
+                    )
+            }
+
+        private val LPC_COS_BASIS =
+            Array(
+                NFFT /
+                    2 +
+                    1
+            ) { bin ->
+                DoubleArray(
+                    LPC_ORDER +
+                        1
+                ) { k ->
+                    cos(
+                        2.0 *
+                            PI *
+                            bin *
+                            k /
+                            NFFT
+                    )
+                }
+            }
+
+        private val LPC_SIN_BASIS =
+            Array(
+                NFFT /
+                    2 +
+                    1
+            ) { bin ->
+                DoubleArray(
+                    LPC_ORDER +
+                        1
+                ) { k ->
+                    sin(
+                        2.0 *
+                            PI *
+                            bin *
+                            k /
+                            NFFT
+                    )
+                }
+            }
     }
 }
