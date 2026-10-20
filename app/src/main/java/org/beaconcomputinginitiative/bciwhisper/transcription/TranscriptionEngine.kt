@@ -879,8 +879,7 @@ class TranscriptionEngine(
                     sharedModelPath ==
                         path
                 ) {
-                    return@synchronized
-                        sharedContextPtr
+                    return@synchronized sharedContextPtr
                 }
 
                 if (
