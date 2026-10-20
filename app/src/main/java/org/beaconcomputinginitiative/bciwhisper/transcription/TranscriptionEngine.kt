@@ -1,6 +1,6 @@
 /*
  * BEACON COMPUTING INITIATIVE
- * BCIAndroid Dead-Air-Aware Transcription Engine
+ * BCIAndroid Fast Dead-Air-Aware Transcription Engine
  * Developer Seal: CJB-DEV-2026
  * Integrity: SHA-256 emitted by Android CI for each committed revision.
  */
@@ -13,7 +13,12 @@ import java.io.File
 import java.io.RandomAccessFile
 import kotlin.math.floor
 
-class TranscriptionEngine(private val context: Context) {
+class TranscriptionEngine(
+    context: Context
+) {
+    private val context =
+        context.applicationContext
+
     data class Result(
         val source: File,
         val transcript: File,
@@ -26,10 +31,19 @@ class TranscriptionEngine(private val context: Context) {
         val activitySeconds: Double,
         val speechDetected: Boolean,
         val usedRecorderTimeline: Boolean,
+        val reconstructionApplied: Boolean,
+        val qualityContrastDb: Double,
+        val qualityNoiseFloorDbfs: Double,
         val averageNoiseReductionDb: Double,
         val formantProtectedBins: Long,
         val harmonicProtectedBins: Long,
-        val speakerCount: Int
+        val speakerCount: Int,
+        val preparationMs: Long,
+        val modelSetupMs: Long,
+        val reconstructionMs: Long,
+        val decodeMs: Long,
+        val diarizationMs: Long,
+        val totalMs: Long
     )
 
     enum class ResourceMode {
@@ -38,13 +52,39 @@ class TranscriptionEngine(private val context: Context) {
         EXCLUSIVE
     }
 
+    /**
+     * Copies the model once (first install only) and initializes the shared
+     * whisper.cpp context before the user requests transcription.
+     */
+    fun preload(): Boolean {
+        val model =
+            ensureModel()
+
+        return sharedContext(
+            model
+        ) != 0L
+    }
+
     fun transcribe(
         wavFile: File,
         resourceMode: ResourceMode
     ): Result {
-        require(wavFile.isFile) { "Recording not found: ${wavFile.name}" }
+        require(
+            wavFile.isFile
+        ) {
+            "Recording not found: ${wavFile.name}"
+        }
 
-        val pcm = readMonoPcm16Wav(wavFile)
+        val totalStart =
+            System.nanoTime()
+
+        val preparationStart =
+            totalStart
+
+        val pcm =
+            readMonoPcm16Wav(
+                wavFile
+            )
 
         val plan =
             TranscriptionAudioPlanner()
@@ -77,6 +117,11 @@ class TranscriptionEngine(private val context: Context) {
                 text + "\n"
             )
 
+            val totalMs =
+                elapsedMs(
+                    totalStart
+                )
+
             return Result(
                 source = wavFile,
                 transcript = out,
@@ -92,14 +137,21 @@ class TranscriptionEngine(private val context: Context) {
                 speechDetected = false,
                 usedRecorderTimeline =
                     plan.usedRecorderTimeline,
+                reconstructionApplied = false,
+                qualityContrastDb = 0.0,
+                qualityNoiseFloorDbfs = -120.0,
                 averageNoiseReductionDb = 0.0,
                 formantProtectedBins = 0L,
                 harmonicProtectedBins = 0L,
-                speakerCount = 0
+                speakerCount = 0,
+                preparationMs = totalMs,
+                modelSetupMs = 0L,
+                reconstructionMs = 0L,
+                decodeMs = 0L,
+                diarizationMs = 0L,
+                totalMs = totalMs
             )
         }
-
-        val model = ensureModel()
 
         val audio16k =
             resampleTo16k(
@@ -107,58 +159,109 @@ class TranscriptionEngine(private val context: Context) {
                 pcm.sampleRate
             )
 
-        val reconstruction =
-            PhoneticReconstructionEngine()
-                .enhance(
-                    input = audio16k,
+        val quality =
+            TranscriptionQualityGate
+                .assess(
+                    samples = audio16k,
                     sampleRate = 16_000
                 )
 
-        val inferenceAudio =
-            reconstruction.samples
-
-        val ptr =
-            WhisperNative.initContext(
-                model.absolutePath
+        val preparationMs =
+            elapsedMs(
+                preparationStart
             )
 
-        require(ptr != 0L) {
+        val modelStart =
+            System.nanoTime()
+
+        val model =
+            ensureModel()
+
+        val ptr =
+            sharedContext(
+                model
+            )
+
+        require(
+            ptr != 0L
+        ) {
             "whisper.cpp could not load the model"
         }
 
-        try {
-            // Transcription yields only when a real-time audio path is active.
-            // In EXCLUSIVE mode, Whisper receives normal foreground CPU
-            // scheduling while nonessential app work is suspended.
-            runCatching {
-                Process.setThreadPriority(
-                    when (resourceMode) {
-                        ResourceMode.CAPTURE_CRITICAL ->
-                            Process.THREAD_PRIORITY_BACKGROUND
+        val modelSetupMs =
+            elapsedMs(
+                modelStart
+            )
 
-                        ResourceMode.MONITORING ->
-                            Process.THREAD_PRIORITY_BACKGROUND
+        val reconstructionStart =
+            System.nanoTime()
 
-                        ResourceMode.EXCLUSIVE ->
-                            Process.THREAD_PRIORITY_DEFAULT
-                    }
-                )
+        val reconstruction =
+            if (quality.reconstruct) {
+                PhoneticReconstructionEngine()
+                    .enhance(
+                        input = audio16k,
+                        sampleRate = 16_000
+                    )
+            } else {
+                null
             }
 
-            val threads =
-                threadBudget(
+        val inferenceAudio =
+            reconstruction
+                ?.samples
+                ?: audio16k
+
+        val reconstructionMs =
+            elapsedMs(
+                reconstructionStart
+            )
+
+        // Transcription yields only when a real-time audio path is active.
+        // In EXCLUSIVE mode, Whisper receives normal foreground CPU
+        // scheduling while nonessential app work is suspended.
+        runCatching {
+            Process.setThreadPriority(
+                when (
                     resourceMode
-                )
+                ) {
+                    ResourceMode.CAPTURE_CRITICAL ->
+                        Process.THREAD_PRIORITY_BACKGROUND
 
-            val rc =
-                WhisperNative.transcribe(
-                    ptr,
-                    inferenceAudio,
-                    threads
-                )
-            require(rc == 0) { "whisper.cpp transcription failed: $rc" }
+                    ResourceMode.MONITORING ->
+                        Process.THREAD_PRIORITY_BACKGROUND
 
-            val rawSegments =
+                    ResourceMode.EXCLUSIVE ->
+                        Process.THREAD_PRIORITY_DEFAULT
+                }
+            )
+        }
+
+        val threads =
+            threadBudget(
+                resourceMode
+            )
+
+        val decodeStart =
+            System.nanoTime()
+
+        val rawSegments =
+            synchronized(
+                nativeLock
+            ) {
+                val rc =
+                    WhisperNative.transcribe(
+                        ptr,
+                        inferenceAudio,
+                        threads
+                    )
+
+                require(
+                    rc == 0
+                ) {
+                    "whisper.cpp transcription failed: $rc"
+                }
+
                 buildList {
                     val count =
                         WhisperNative.segmentCount(
@@ -181,7 +284,8 @@ class TranscriptionEngine(private val context: Context) {
                         ) {
                             add(
                                 SpeakerDiarizer.Segment(
-                                    text = segmentText,
+                                    text =
+                                        segmentText,
                                     start10ms =
                                         WhisperNative.segmentStart10ms(
                                             ptr,
@@ -197,160 +301,503 @@ class TranscriptionEngine(private val context: Context) {
                         }
                     }
                 }
+            }
 
-            val labeledSegments =
-                SpeakerDiarizer(
-                    sampleRate = 16_000
+        val decodeMs =
+            elapsedMs(
+                decodeStart
+            )
+
+        val diarizationStart =
+            System.nanoTime()
+
+        val labeledSegments =
+            SpeakerDiarizer(
+                sampleRate = 16_000
+            )
+                .label(
+                    audio =
+                        inferenceAudio,
+                    segments =
+                        rawSegments
                 )
-                    .label(
-                        audio =
-                            inferenceAudio,
-                        segments =
-                            rawSegments
-                    )
 
-            val decoded =
-                labeledSegments
-                    .joinToString(
-                        separator = "\n"
-                    ) {
-                        "Speaker ${it.speaker}: ${it.text}"
-                    }
-                    .trim()
+        val diarizationMs =
+            elapsedMs(
+                diarizationStart
+            )
 
-            val speakerCount =
-                labeledSegments
-                    .maxOfOrNull {
-                        it.speaker
-                    }
-                    ?: 0
-
-            val text =
-                decoded.ifBlank {
-                    "[No intelligible speech detected]"
+        val decoded =
+            labeledSegments
+                .joinToString(
+                    separator = "\n"
+                ) {
+                    "Speaker ${it.speaker}: ${it.text}"
                 }
+                .trim()
 
-            out.writeText(
-                text + "\n"
-            )
+        val speakerCount =
+            labeledSegments
+                .maxOfOrNull {
+                    it.speaker
+                }
+                ?: 0
 
-            return Result(
-                source = wavFile,
-                transcript = out,
-                text = text,
-                threadsUsed = threads,
-                resourceMode = resourceMode,
-                sourceSeconds = plan.sourceSeconds,
-                inferenceSeconds =
-                    plan.inferenceSeconds,
-                deadAirSkippedSeconds =
-                    plan.deadAirSkippedSeconds,
-                activitySeconds =
-                    plan.activitySeconds,
-                speechDetected =
-                    decoded.isNotBlank(),
-                usedRecorderTimeline =
-                    plan.usedRecorderTimeline,
-                averageNoiseReductionDb =
-                    reconstruction.metrics
-                        .averageNoiseReductionDb,
-                formantProtectedBins =
-                    reconstruction.metrics
-                        .formantProtectedBins,
-                harmonicProtectedBins =
-                    reconstruction.metrics
-                        .harmonicProtectedBins,
-                speakerCount =
-                    speakerCount
-            )
-        } finally {
-            WhisperNative.freeContext(ptr)
-        }
+        val text =
+            decoded.ifBlank {
+                "[No intelligible speech detected]"
+            }
+
+        out.writeText(
+            text + "\n"
+        )
+
+        return Result(
+            source = wavFile,
+            transcript = out,
+            text = text,
+            threadsUsed = threads,
+            resourceMode = resourceMode,
+            sourceSeconds =
+                plan.sourceSeconds,
+            inferenceSeconds =
+                plan.inferenceSeconds,
+            deadAirSkippedSeconds =
+                plan.deadAirSkippedSeconds,
+            activitySeconds =
+                plan.activitySeconds,
+            speechDetected =
+                decoded.isNotBlank(),
+            usedRecorderTimeline =
+                plan.usedRecorderTimeline,
+            reconstructionApplied =
+                reconstruction != null,
+            qualityContrastDb =
+                quality.contrastDb,
+            qualityNoiseFloorDbfs =
+                quality.noiseFloorDbfs,
+            averageNoiseReductionDb =
+                reconstruction
+                    ?.metrics
+                    ?.averageNoiseReductionDb
+                    ?: 0.0,
+            formantProtectedBins =
+                reconstruction
+                    ?.metrics
+                    ?.formantProtectedBins
+                    ?: 0L,
+            harmonicProtectedBins =
+                reconstruction
+                    ?.metrics
+                    ?.harmonicProtectedBins
+                    ?: 0L,
+            speakerCount =
+                speakerCount,
+            preparationMs =
+                preparationMs,
+            modelSetupMs =
+                modelSetupMs,
+            reconstructionMs =
+                reconstructionMs,
+            decodeMs =
+                decodeMs,
+            diarizationMs =
+                diarizationMs,
+            totalMs =
+                elapsedMs(
+                    totalStart
+                )
+        )
     }
 
     fun transcripts(): List<File> =
-        File(context.filesDir, "transcripts")
-            .listFiles { f -> f.isFile && f.extension.equals("txt", true) }
-            ?.sortedByDescending { it.lastModified() }
+        File(
+            context.filesDir,
+            "transcripts"
+        )
+            .listFiles {
+                    f ->
+                f.isFile &&
+                    f.extension.equals(
+                        "txt",
+                        true
+                    )
+            }
+            ?.sortedByDescending {
+                it.lastModified()
+            }
             .orEmpty()
 
     private fun ensureModel(): File {
-        val dir = File(context.filesDir, "models").apply { mkdirs() }
-        val model = File(dir, MODEL_NAME)
-        if (model.isFile && model.length() > 1_000_000L) return model
-
-        context.assets.open("models/$MODEL_NAME").use { input ->
-            model.outputStream().buffered().use { output ->
-                input.copyTo(output)
+        val dir =
+            File(
+                context.filesDir,
+                "models"
+            ).apply {
+                mkdirs()
             }
+
+        val model =
+            File(
+                dir,
+                MODEL_NAME
+            )
+
+        if (
+            model.isFile &&
+            model.length() >
+                1_000_000L
+        ) {
+            return model
         }
+
+        context.assets
+            .open(
+                "models/$MODEL_NAME"
+            )
+            .use {
+                    input ->
+
+                model.outputStream()
+                    .buffered()
+                    .use {
+                            output ->
+
+                        input.copyTo(
+                            output,
+                            MODEL_COPY_BUFFER_BYTES
+                        )
+                    }
+            }
+
         return model
     }
 
-    private data class Pcm(val sampleRate: Int, val samples: ShortArray)
+    private data class Pcm(
+        val sampleRate: Int,
+        val samples: ShortArray
+    )
 
-    private fun readMonoPcm16Wav(file: File): Pcm {
-        RandomAccessFile(file, "r").use { raf ->
-            require(raf.length() >= 44) { "WAV is too small" }
-            raf.seek(22)
-            val channels = readShortLE(raf)
-            val sampleRate = readIntLE(raf)
-            raf.seek(34)
-            val bits = readShortLE(raf)
-            require(channels == 1 && bits == 16) { "Expected mono PCM16 WAV" }
+    /**
+     * Reads PCM payload in one buffered operation instead of two
+     * RandomAccessFile calls per sample.
+     */
+    private fun readMonoPcm16Wav(
+        file: File
+    ): Pcm {
+        RandomAccessFile(
+            file,
+            "r"
+        ).use {
+                raf ->
 
-            raf.seek(12)
-            var dataOffset = -1L
-            var dataSize = 0
-            while (raf.filePointer + 8 <= raf.length()) {
-                val id = ByteArray(4).also { raf.readFully(it) }.toString(Charsets.US_ASCII)
-                val size = readIntLE(raf)
-                if (id == "data") {
-                    dataOffset = raf.filePointer
-                    dataSize = size
+            require(
+                raf.length() >=
+                    44
+            ) {
+                "WAV is too small"
+            }
+
+            raf.seek(
+                22
+            )
+
+            val channels =
+                readShortLE(
+                    raf
+                )
+
+            val sampleRate =
+                readIntLE(
+                    raf
+                )
+
+            raf.seek(
+                34
+            )
+
+            val bits =
+                readShortLE(
+                    raf
+                )
+
+            require(
+                channels == 1 &&
+                    bits == 16
+            ) {
+                "Expected mono PCM16 WAV"
+            }
+
+            raf.seek(
+                12
+            )
+
+            var dataOffset =
+                -1L
+
+            var dataSize =
+                0
+
+            while (
+                raf.filePointer +
+                    8 <=
+                raf.length()
+            ) {
+                val id =
+                    ByteArray(
+                        4
+                    )
+                        .also {
+                            raf.readFully(
+                                it
+                            )
+                        }
+                        .toString(
+                            Charsets.US_ASCII
+                        )
+
+                val size =
+                    readIntLE(
+                        raf
+                    )
+
+                if (
+                    id ==
+                    "data"
+                ) {
+                    dataOffset =
+                        raf.filePointer
+
+                    dataSize =
+                        size
+
                     break
                 }
-                raf.seek((raf.filePointer + size + (size and 1)).coerceAtMost(raf.length()))
+
+                raf.seek(
+                    (
+                        raf.filePointer +
+                            size +
+                            (
+                                size and
+                                    1
+                                )
+                        )
+                        .coerceAtMost(
+                            raf.length()
+                        )
+                )
             }
-            require(dataOffset >= 0) { "WAV data chunk missing" }
-            raf.seek(dataOffset)
-            val count = dataSize / 2
-            val samples = ShortArray(count)
-            for (i in 0 until count) samples[i] = readShortLE(raf).toShort()
-            return Pcm(sampleRate, samples)
+
+            require(
+                dataOffset >=
+                    0
+            ) {
+                "WAV data chunk missing"
+            }
+
+            require(
+                dataSize >=
+                    0 &&
+                    dataSize.toLong() <=
+                    raf.length() -
+                        dataOffset
+            ) {
+                "Invalid WAV data chunk"
+            }
+
+            raf.seek(
+                dataOffset
+            )
+
+            val bytes =
+                ByteArray(
+                    dataSize
+                )
+
+            raf.readFully(
+                bytes
+            )
+
+            val count =
+                dataSize /
+                    2
+
+            val samples =
+                ShortArray(
+                    count
+                )
+
+            var byteIndex =
+                0
+
+            for (
+                i in
+                0 until count
+            ) {
+                val lo =
+                    bytes[
+                        byteIndex
+                    ]
+                        .toInt() and
+                        0xff
+
+                val hi =
+                    bytes[
+                        byteIndex +
+                            1
+                    ]
+                        .toInt()
+
+                samples[i] =
+                    (
+                        lo or
+                            (
+                                hi shl
+                                    8
+                                )
+                        )
+                        .toShort()
+
+                byteIndex +=
+                    2
+            }
+
+            return Pcm(
+                sampleRate,
+                samples
+            )
         }
     }
 
-    private fun resampleTo16k(input: ShortArray, sourceRate: Int): FloatArray {
-        if (sourceRate == 16000) {
-            return FloatArray(input.size) { input[it] / 32768.0f }
+    private fun resampleTo16k(
+        input: ShortArray,
+        sourceRate: Int
+    ): FloatArray {
+        if (
+            sourceRate ==
+            16_000
+        ) {
+            return FloatArray(
+                input.size
+            ) {
+                input[it] /
+                    32768.0f
+            }
         }
-        val outSize = floor(input.size.toDouble() * 16000.0 / sourceRate).toInt().coerceAtLeast(1)
-        val out = FloatArray(outSize)
-        val ratio = sourceRate.toDouble() / 16000.0
-        for (i in out.indices) {
-            val pos = i * ratio
-            val left = pos.toInt().coerceIn(0, input.lastIndex)
-            val right = (left + 1).coerceAtMost(input.lastIndex)
-            val frac = pos - left
-            val sample = input[left] * (1.0 - frac) + input[right] * frac
-            out[i] = (sample / 32768.0).toFloat()
+
+        val outSize =
+            floor(
+                input.size.toDouble() *
+                    16_000.0 /
+                    sourceRate
+            )
+                .toInt()
+                .coerceAtLeast(
+                    1
+                )
+
+        val out =
+            FloatArray(
+                outSize
+            )
+
+        val ratio =
+            sourceRate.toDouble() /
+                16_000.0
+
+        for (
+            i in
+            out.indices
+        ) {
+            val pos =
+                i *
+                    ratio
+
+            val left =
+                pos.toInt()
+                    .coerceIn(
+                        0,
+                        input.lastIndex
+                    )
+
+            val right =
+                (
+                    left +
+                        1
+                    )
+                    .coerceAtMost(
+                        input.lastIndex
+                    )
+
+            val frac =
+                pos -
+                    left
+
+            val sample =
+                input[left] *
+                    (
+                        1.0 -
+                            frac
+                        ) +
+                    input[right] *
+                        frac
+
+            out[i] =
+                (
+                    sample /
+                        32768.0
+                    )
+                    .toFloat()
         }
+
         return out
     }
 
-    private fun readShortLE(raf: RandomAccessFile): Int {
-        val a = raf.readUnsignedByte()
-        val b = raf.readUnsignedByte()
-        return a or (b shl 8)
+    private fun readShortLE(
+        raf: RandomAccessFile
+    ): Int {
+        val a =
+            raf.readUnsignedByte()
+
+        val b =
+            raf.readUnsignedByte()
+
+        return a or
+            (
+                b shl
+                    8
+                )
     }
 
-    private fun readIntLE(raf: RandomAccessFile): Int {
-        val a = raf.readUnsignedByte()
-        val b = raf.readUnsignedByte()
-        val c = raf.readUnsignedByte()
-        val d = raf.readUnsignedByte()
-        return a or (b shl 8) or (c shl 16) or (d shl 24)
+    private fun readIntLE(
+        raf: RandomAccessFile
+    ): Int {
+        val a =
+            raf.readUnsignedByte()
+
+        val b =
+            raf.readUnsignedByte()
+
+        val c =
+            raf.readUnsignedByte()
+
+        val d =
+            raf.readUnsignedByte()
+
+        return a or
+            (
+                b shl
+                    8
+                ) or
+            (
+                c shl
+                    16
+                ) or
+            (
+                d shl
+                    24
+                )
     }
 
     private fun threadBudget(
@@ -360,27 +807,110 @@ class TranscriptionEngine(private val context: Context) {
             Runtime
                 .getRuntime()
                 .availableProcessors()
-                .coerceAtLeast(1)
+                .coerceAtLeast(
+                    1
+                )
 
-        return when (mode) {
+        return when (
+            mode
+        ) {
             ResourceMode.CAPTURE_CRITICAL ->
                 1
 
             ResourceMode.MONITORING ->
                 when {
-                    cores >= 6 -> 2
-                    else -> 1
+                    cores >=
+                        6 ->
+                        2
+
+                    else ->
+                        1
                 }
 
             ResourceMode.EXCLUSIVE ->
                 maxOf(
                     1,
-                    cores - 1
+                    cores -
+                        1
                 )
         }
     }
 
+    private fun elapsedMs(
+        startNanos: Long
+    ): Long =
+        (
+            System.nanoTime() -
+                startNanos
+            ) /
+            1_000_000L
+
     companion object {
-        const val MODEL_NAME = "ggml-tiny.en.bin"
+        const val MODEL_NAME =
+            "ggml-tiny.en.bin"
+
+        private const val MODEL_COPY_BUFFER_BYTES =
+            1024 *
+                1024
+
+        private val nativeLock =
+            Any()
+
+        @Volatile
+        private var sharedContextPtr =
+            0L
+
+        @Volatile
+        private var sharedModelPath: String? =
+            null
+
+        private fun sharedContext(
+            model: File
+        ): Long =
+            synchronized(
+                nativeLock
+            ) {
+                val path =
+                    model.absolutePath
+
+                if (
+                    sharedContextPtr !=
+                        0L &&
+                    sharedModelPath ==
+                        path
+                ) {
+                    return@synchronized
+                        sharedContextPtr
+                }
+
+                if (
+                    sharedContextPtr !=
+                    0L
+                ) {
+                    WhisperNative.freeContext(
+                        sharedContextPtr
+                    )
+
+                    sharedContextPtr =
+                        0L
+                }
+
+                sharedContextPtr =
+                    WhisperNative.initContext(
+                        path
+                    )
+
+                sharedModelPath =
+                    if (
+                        sharedContextPtr !=
+                        0L
+                    ) {
+                        path
+                    } else {
+                        null
+                    }
+
+                sharedContextPtr
+            }
     }
 }
