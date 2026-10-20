@@ -212,29 +212,27 @@ object TranscriptionQualityGate {
         }
     }
 
-    companion object {
-        private const val FRAME_SECONDS =
-            0.020
+    private const val FRAME_SECONDS =
+        0.020
 
-        private const val NOISE_PERCENTILE =
-            0.12
+    private const val NOISE_PERCENTILE =
+        0.12
 
-        private const val SPEECH_PERCENTILE =
-            0.78
+    private const val SPEECH_PERCENTILE =
+        0.78
 
-        private const val ACTIVE_MARGIN_DB =
-            6.0
+    private const val ACTIVE_MARGIN_DB =
+        6.0
 
-        private const val MIN_ACTIVE_DBFS =
-            -55.0
+    private const val MIN_ACTIVE_DBFS =
+        -55.0
 
-        private const val MAX_CLEAN_NOISE_FLOOR_DBFS =
-            -42.0
+    private const val MAX_CLEAN_NOISE_FLOOR_DBFS =
+        -42.0
 
-        private const val MIN_CLEAN_CONTRAST_DB =
-            10.0
+    private const val MIN_CLEAN_CONTRAST_DB =
+        10.0
 
-        private const val MIN_CLEAN_SPEECH_LEVEL_DBFS =
-            -38.0
-    }
+    private const val MIN_CLEAN_SPEECH_LEVEL_DBFS =
+        -38.0
 }
