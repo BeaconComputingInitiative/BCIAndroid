@@ -174,6 +174,7 @@ class MainActivity : Activity() {
         setContentView(buildShell())
         showScreen(Screen.MONITOR)
         maybeRequestMicrophonePermissionOnce()
+        preloadTranscriptionEngine()
     }
 
     override fun onStart() {
@@ -238,6 +239,23 @@ class MainActivity : Activity() {
             pendingBluetoothSelection = false
             renderInputSourceControls()
         }
+    }
+
+    private fun preloadTranscriptionEngine() {
+        Thread({
+            runCatching {
+                Process.setThreadPriority(
+                    Process.THREAD_PRIORITY_BACKGROUND
+                )
+            }
+
+            runCatching {
+                transcriptionEngine.preload()
+            }
+        }, "BCI-WhisperWarmup").apply {
+            priority =
+                Thread.MIN_PRIORITY
+        }.start()
     }
 
     private fun hasBluetoothPermission(): Boolean =
@@ -556,7 +574,7 @@ class MainActivity : Activity() {
 
         header.addView(
             TextView(this).apply {
-                text = "ANDROID • v6.0 • ALPHA 13"
+                text = "ANDROID • v6.0 • ALPHA 14"
                 textSize = 10f
                 setTextColor(muted)
                 typeface = uiTypeface
@@ -1657,13 +1675,14 @@ class MainActivity : Activity() {
                         } else {
                             String.format(
                                 Locale.US,
-                                "Transcript saved: %s • %d Whisper thread(s) • %.1fs dead air skipped • %d speaker label(s) • formant %d • harmonic %d",
+                                "Transcript saved: %s • %.2fs total / %.2fs decode • %d thread(s) • %.1fs dead air skipped • %s reconstruction • %d speaker label(s)",
                                 it.transcript.name,
+                                it.totalMs / 1000.0,
+                                it.decodeMs / 1000.0,
                                 it.threadsUsed,
                                 it.deadAirSkippedSeconds,
-                                it.speakerCount,
-                                it.formantProtectedBins,
-                                it.harmonicProtectedBins
+                                if (it.reconstructionApplied) "full" else "fast-path",
+                                it.speakerCount
                             )
                         }
 
@@ -1686,7 +1705,14 @@ class MainActivity : Activity() {
             }
         }, "BCI-WhisperCpp").apply {
             priority =
-                Thread.MIN_PRIORITY
+                if (
+                    resourceMode ==
+                    TranscriptionEngine.ResourceMode.EXCLUSIVE
+                ) {
+                    Thread.NORM_PRIORITY
+                } else {
+                    Thread.MIN_PRIORITY
+                }
         }.start()
     }
 
