@@ -172,6 +172,9 @@ native_tx_cpp = read("app/src/main/cpp/whisper/native_engine.cpp")
 audio_service = read(
     "app/src/main/java/org/beaconcomputinginitiative/bciwhisper/audio/AudioMonitorService.kt"
 )
+main_activity = read(
+    "app/src/main/java/org/beaconcomputinginitiative/bciwhisper/MainActivity.kt"
+)
 broadcast_config = read(
     "app/src/main/java/org/beaconcomputinginitiative/bciwhisper/broadcast/BroadcastConfig.kt"
 )
@@ -416,6 +419,24 @@ require(
     "public player SSE path must use the gateway stream id",
 )
 
+require(
+    "preloadTranscriptionEngine()" not in one(
+        r"override\s+fun\s+onCreate\s*\(.*?\)\s*\{(.*?)\n\s*\}",
+        main_activity,
+        "MainActivity onCreate body",
+    ),
+    "offline Whisper warmup must not start from Activity onCreate",
+)
+require(
+    re.search(
+        r"private\s+fun\s+buildTranscriptsScreen\s*\(\).*?preloadTranscriptionEngine\s*\(",
+        main_activity,
+        re.S,
+    )
+    is not None,
+    "offline Whisper warmup must be lazy from the transcripts workflow",
+)
+
 # Robust error handling contract
 require(
     core_contract["contract"]["id"] == "bci-core-v1",
@@ -444,7 +465,12 @@ require(
     "robust error loop interval does not match core contract",
 )
 require(
-    f'private const val CAPTURE_STALL_MS =\n            {contract_baseline["failureRules"]["pcmNoProgressMs"]}L'
+    f'private const val FIRST_PCM_FRAME_TIMEOUT_MS =\n            {contract_baseline["failureRules"]["firstPcmFrameTimeoutMs"]:,}L'.replace(",", "_")
+    in audio_service,
+    "first PCM frame timeout does not match core contract",
+)
+require(
+    f'private const val CAPTURE_STALL_MS =\n            {contract_baseline["failureRules"]["pcmNoProgressMs"]:,}L'.replace(",", "_")
     in audio_service,
     "capture stall threshold does not match core contract",
 )
