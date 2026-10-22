@@ -189,12 +189,6 @@ class AudioMonitorService : Service() {
                         decodeMs =
                             segment.decodeMs
                     )
-                },
-                onError = {
-                        message ->
-                    lastError =
-                        "Live transcription: " +
-                            message
                 }
             )
 
