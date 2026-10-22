@@ -18,6 +18,7 @@ import org.beaconcomputinginitiative.bciwhisper.R
 import org.beaconcomputinginitiative.bciwhisper.broadcast.BroadcastConfig
 import org.beaconcomputinginitiative.bciwhisper.broadcast.BroadcastPublisher
 import org.beaconcomputinginitiative.bciwhisper.broadcast.PublisherCredentialStore
+import org.beaconcomputinginitiative.bciwhisper.transcription.LiveTranscriptionEngine
 import java.io.File
 import kotlin.math.log10
 import kotlin.math.pow
@@ -65,6 +66,12 @@ class AudioMonitorService : Service() {
         val broadcastState: BroadcastPublisher.State,
         val broadcastBytesSent: Long,
         val broadcastDroppedFrames: Long,
+        val broadcastTranscriptSegments: Long,
+        val broadcastDroppedTranscripts: Long,
+        val liveTranscriptionDecodeMs: Long,
+        val liveTranscriptionSkippedWindows: Long,
+        val liveTranscriptionText: String?,
+        val liveTranscriptionError: String?,
         val broadcastLastError: String?
     )
 
@@ -102,6 +109,9 @@ class AudioMonitorService : Service() {
 
     private lateinit var recorder:
         EventRecorder
+
+    private lateinit var liveTranscription:
+        LiveTranscriptionEngine
 
     @Volatile private var running = false
     @Volatile private var rmsDbfs = -120.0
@@ -157,6 +167,37 @@ class AudioMonitorService : Service() {
                 SAMPLE_RATE
         )
 
+        liveTranscription =
+            LiveTranscriptionEngine(
+                context =
+                    this,
+                sampleRate =
+                    SAMPLE_RATE,
+                onSegment = {
+                        segment ->
+                    publisher.submitTranscript(
+                        sequence =
+                            segment.sequence,
+                        startMs =
+                            segment.startMs,
+                        endMs =
+                            segment.endMs,
+                        speaker =
+                            segment.speaker,
+                        text =
+                            segment.text,
+                        decodeMs =
+                            segment.decodeMs
+                    )
+                },
+                onError = {
+                        message ->
+                    lastError =
+                        "Live transcription: " +
+                            message
+                }
+            )
+
         createNotificationChannel()
     }
 
@@ -203,6 +244,8 @@ class AudioMonitorService : Service() {
 
                     startMonitoring()
 
+                    liveTranscription.start()
+
                     publisher.start(
                         BroadcastConfig.PUBLISH_URL,
                         token
@@ -223,6 +266,7 @@ class AudioMonitorService : Service() {
             }
 
             ACTION_STOP_LIVE -> {
+                liveTranscription.stop()
                 publisher.stop()
 
                 updateNotification(
@@ -237,6 +281,9 @@ class AudioMonitorService : Service() {
     fun snapshot(): Snapshot {
         val broadcast =
             publisher.snapshot()
+
+        val captions =
+            liveTranscription.snapshot()
 
         return Snapshot(
             running = running,
@@ -286,6 +333,18 @@ class AudioMonitorService : Service() {
                 broadcast.bytesSent,
             broadcastDroppedFrames =
                 broadcast.droppedFrames,
+            broadcastTranscriptSegments =
+                broadcast.transcriptsSent,
+            broadcastDroppedTranscripts =
+                broadcast.droppedTranscripts,
+            liveTranscriptionDecodeMs =
+                captions.lastDecodeMs,
+            liveTranscriptionSkippedWindows =
+                captions.skippedWindows,
+            liveTranscriptionText =
+                captions.latestText,
+            liveTranscriptionError =
+                captions.lastError,
             broadcastLastError =
                 broadcast.lastError
         )
@@ -549,6 +608,9 @@ class AudioMonitorService : Service() {
         val block =
             ShortArray(BLOCK_SIZE)
 
+        var publisherWasLive =
+            false
+
         while (running) {
             val n =
                 NativeAudioEngine
@@ -581,10 +643,37 @@ class AudioMonitorService : Service() {
                 n
             )
 
-            publisher.submitPcm(
-                block,
-                n
-            )
+            val broadcastState =
+                publisher
+                    .snapshot()
+                    .state
+
+            if (
+                broadcastState ==
+                BroadcastPublisher
+                    .State.LIVE
+            ) {
+                if (!publisherWasLive) {
+                    liveTranscription
+                        .resetStream()
+                }
+
+                publisher.submitPcm(
+                    block,
+                    n
+                )
+
+                liveTranscription.offer(
+                    block,
+                    n
+                )
+
+                publisherWasLive =
+                    true
+            } else {
+                publisherWasLive =
+                    false
+            }
 
             framesCaptured +=
                 n.toLong()
@@ -773,6 +862,7 @@ class AudioMonitorService : Service() {
     }
 
     private fun stopMonitoring() {
+        liveTranscription.stop()
         publisher.stop()
         bluetoothRouter.clear()
 
@@ -806,6 +896,7 @@ class AudioMonitorService : Service() {
     }
 
     override fun onDestroy() {
+        liveTranscription.stop()
         publisher.stop()
         bluetoothRouter.clear()
 
