@@ -11,7 +11,6 @@ import android.content.Context
 import android.os.Process
 import java.io.File
 import java.io.RandomAccessFile
-import kotlin.math.floor
 
 class TranscriptionEngine(
     context: Context
@@ -60,9 +59,10 @@ class TranscriptionEngine(
         val model =
             ensureModel()
 
-        return sharedContext(
-            model
-        ) != 0L
+        return NativeTranscriptionEngine
+            .warmModel(
+                model.absolutePath
+            )
     }
 
     fun transcribe(
@@ -154,15 +154,16 @@ class TranscriptionEngine(
         }
 
         val audio16k =
-            resampleTo16k(
-                plan.samples,
-                pcm.sampleRate
-            )
+            NativeTranscriptionEngine
+                .resamplePcm16To16k(
+                    input = plan.samples,
+                    sourceRate = pcm.sampleRate
+                )
 
         val quality =
-            TranscriptionQualityGate
-                .assess(
-                    samples = audio16k,
+            NativeTranscriptionEngine
+                .quality(
+                    audio = audio16k,
                     sampleRate = 16_000
                 )
 
@@ -177,13 +178,14 @@ class TranscriptionEngine(
         val model =
             ensureModel()
 
-        val ptr =
-            sharedContext(
-                model
-            )
+        val modelReady =
+            NativeTranscriptionEngine
+                .warmModel(
+                    model.absolutePath
+                )
 
         require(
-            ptr != 0L
+            modelReady
         ) {
             "whisper.cpp could not load the model"
         }
@@ -250,11 +252,11 @@ class TranscriptionEngine(
                 nativeLock
             ) {
                 val rc =
-                    WhisperNative.transcribe(
-                        ptr,
-                        inferenceAudio,
-                        threads
-                    )
+                    NativeTranscriptionEngine
+                        .transcribe(
+                            inferenceAudio,
+                            threads
+                        )
 
                 require(
                     rc == 0
@@ -264,19 +266,18 @@ class TranscriptionEngine(
 
                 buildList {
                     val count =
-                        WhisperNative.segmentCount(
-                            ptr
-                        )
+                        NativeTranscriptionEngine
+                            .segmentCount()
 
                     for (
                         i in
                         0 until count
                     ) {
                         val segmentText =
-                            WhisperNative.segmentText(
-                                ptr,
-                                i
-                            )
+                            NativeTranscriptionEngine
+                                .segmentText(
+                                    i
+                                )
                                 .trim()
 
                         if (
@@ -287,15 +288,15 @@ class TranscriptionEngine(
                                     text =
                                         segmentText,
                                     start10ms =
-                                        WhisperNative.segmentStart10ms(
-                                            ptr,
-                                            i
-                                        ),
+                                        NativeTranscriptionEngine
+                                            .segmentStart10ms(
+                                                i
+                                            ),
                                     end10ms =
-                                        WhisperNative.segmentEnd10ms(
-                                            ptr,
-                                            i
-                                        )
+                                        NativeTranscriptionEngine
+                                            .segmentEnd10ms(
+                                                i
+                                            )
                                 )
                             )
                         }
@@ -670,90 +671,6 @@ class TranscriptionEngine(
         }
     }
 
-    private fun resampleTo16k(
-        input: ShortArray,
-        sourceRate: Int
-    ): FloatArray {
-        if (
-            sourceRate ==
-            16_000
-        ) {
-            return FloatArray(
-                input.size
-            ) {
-                input[it] /
-                    32768.0f
-            }
-        }
-
-        val outSize =
-            floor(
-                input.size.toDouble() *
-                    16_000.0 /
-                    sourceRate
-            )
-                .toInt()
-                .coerceAtLeast(
-                    1
-                )
-
-        val out =
-            FloatArray(
-                outSize
-            )
-
-        val ratio =
-            sourceRate.toDouble() /
-                16_000.0
-
-        for (
-            i in
-            out.indices
-        ) {
-            val pos =
-                i *
-                    ratio
-
-            val left =
-                pos.toInt()
-                    .coerceIn(
-                        0,
-                        input.lastIndex
-                    )
-
-            val right =
-                (
-                    left +
-                        1
-                    )
-                    .coerceAtMost(
-                        input.lastIndex
-                    )
-
-            val frac =
-                pos -
-                    left
-
-            val sample =
-                input[left] *
-                    (
-                        1.0 -
-                            frac
-                        ) +
-                    input[right] *
-                        frac
-
-            out[i] =
-                (
-                    sample /
-                        32768.0
-                    )
-                    .toFloat()
-        }
-
-        return out
-    }
-
     private fun readShortLE(
         raf: RandomAccessFile
     ): Int {
@@ -855,61 +772,5 @@ class TranscriptionEngine(
 
         private val nativeLock =
             Any()
-
-        @Volatile
-        private var sharedContextPtr =
-            0L
-
-        @Volatile
-        private var sharedModelPath: String? =
-            null
-
-        private fun sharedContext(
-            model: File
-        ): Long =
-            synchronized(
-                nativeLock
-            ) {
-                val path =
-                    model.absolutePath
-
-                if (
-                    sharedContextPtr !=
-                        0L &&
-                    sharedModelPath ==
-                        path
-                ) {
-                    return@synchronized sharedContextPtr
-                }
-
-                if (
-                    sharedContextPtr !=
-                    0L
-                ) {
-                    WhisperNative.freeContext(
-                        sharedContextPtr
-                    )
-
-                    sharedContextPtr =
-                        0L
-                }
-
-                sharedContextPtr =
-                    WhisperNative.initContext(
-                        path
-                    )
-
-                sharedModelPath =
-                    if (
-                        sharedContextPtr !=
-                        0L
-                    ) {
-                        path
-                    } else {
-                        null
-                    }
-
-                sharedContextPtr
-            }
     }
 }
