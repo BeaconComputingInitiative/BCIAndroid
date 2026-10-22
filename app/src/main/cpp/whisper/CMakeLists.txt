@@ -19,6 +19,7 @@ add_library(
     SHARED
     "${WHISPER_ROOT}/src/whisper.cpp"
     "${CMAKE_SOURCE_DIR}/jni.c"
+    "${CMAKE_SOURCE_DIR}/native_engine.cpp"
 )
 
 target_compile_definitions(
