@@ -93,13 +93,24 @@ jobs:
             app/src/main/java/org/beaconcomputinginitiative/bciwhisper/transcription/SpeakerDiarizer.kt \
             app/src/main/java/org/beaconcomputinginitiative/bciwhisper/transcription/TranscriptionEngine.kt \
             app/src/main/java/org/beaconcomputinginitiative/bciwhisper/transcription/TranscriptionQualityGate.kt \
-            app/src/main/java/org/beaconcomputinginitiative/bciwhisper/transcription/WhisperNative.kt \
+            app/src/main/java/org/beaconcomputinginitiative/bciwhisper/transcription/NativeTranscriptionEngine.kt \
             app/src/main/java/org/beaconcomputinginitiative/bciwhisper/ui/Spectrum3DView.kt \
-            app/src/main/cpp/whisper/jni.c \
+            app/src/main/cpp/whisper/native_engine.cpp \
+            app/src/main/cpp/whisper/CMakeLists.txt \
             app/src/main/java/org/beaconcomputinginitiative/bciwhisper/broadcast/BroadcastConfig.kt \
             app/src/main/java/org/beaconcomputinginitiative/bciwhisper/broadcast/BroadcastPublisher.kt \
             app/src/main/java/org/beaconcomputinginitiative/bciwhisper/broadcast/PublisherCredentialStore.kt \
             app/build.gradle.kts
+
+      - name: Native architecture invariant
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -q "WhisperNative" app/src/main/java/org/beaconcomputinginitiative/bciwhisper/transcription/TranscriptionEngine.kt
+          ! grep -q "sharedContextPtr" app/src/main/java/org/beaconcomputinginitiative/bciwhisper/transcription/TranscriptionEngine.kt
+          ! grep -q "resampleTo16k" app/src/main/java/org/beaconcomputinginitiative/bciwhisper/transcription/TranscriptionEngine.kt
+          grep -q "NativeTranscriptionEngine" app/src/main/java/org/beaconcomputinginitiative/bciwhisper/transcription/TranscriptionEngine.kt
+          grep -q "native_engine.cpp" app/src/main/cpp/whisper/CMakeLists.txt
 
       - name: Run JVM regression tests
         run: gradle --no-daemon --stacktrace :app:testDebugUnitTest
@@ -151,16 +162,16 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          cp app/build/outputs/apk/debug/app-debug.apk             out/BCIWhisper-v6.0-Android-alpha14-debug.apk
+          cp app/build/outputs/apk/debug/app-debug.apk             out/BCIWhisper-v6.0-Android-alpha15-debug.apk
           (
             cd out
-            sha256sum BCIWhisper-v6.0-Android-alpha14-debug.apk               > BCIWhisper-v6.0-Android-alpha14-debug.apk.sha256
+            sha256sum BCIWhisper-v6.0-Android-alpha15-debug.apk               > BCIWhisper-v6.0-Android-alpha15-debug.apk.sha256
           )
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: BCIWhisper-Android-alpha14
+          name: BCIWhisper-Android-alpha15
           path: out/*
           if-no-files-found: error
           retention-days: 14
