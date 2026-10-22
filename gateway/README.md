@@ -7,15 +7,16 @@ It is independent of the desktop BCIWhisper gateway while retaining the same `bc
 ## Data path
 
 ```text
-BCIAndroid AudioRecord
+BCIAndroid Oboe / NDK audio
         ↓ PCM16 44.1 kHz mono
-BroadcastPublisher
-        ↓ outbound authenticated WSS
-BCIAndroid Live Gateway
-        ↓ ffmpeg MP3 transcode
-/live/bciandroid-main
-        ↓
-BCIAndroid StreamPlayer
+BroadcastPublisher ───────────────┐
+        ↓ authenticated WSS       │ rolling whisper.cpp captions
+BCIAndroid Live Gateway           │
+        ↓ ffmpeg MP3              ↓
+/live/bciandroid-main     /api/v1/transcript/bciandroid-main
+        └──────────────┬──────────┘
+                       ↓
+              Public StreamPlayer
 ```
 
 The Android device never exposes an inbound port.
@@ -40,6 +41,7 @@ BCI_PUBLIC_BASE_URL=https://your-public-gateway.example
 BCI_DB_PATH=./data/bciandroid_gateway.db
 BCI_MAX_LISTENERS=128
 BCI_REPLAY_BUFFER_BYTES=1048576
+BCI_TRANSCRIPT_HISTORY_LIMIT=120
 ```
 
 ## Local development
@@ -61,6 +63,18 @@ Public status:
 
 ```bash
 curl http://127.0.0.1:8776/api/v1/status
+```
+
+Recent live transcript segments:
+
+```bash
+curl http://127.0.0.1:8776/api/v1/transcript/bciandroid-main/history
+```
+
+Live captions use Server-Sent Events so browser viewers reconnect automatically:
+
+```bash
+curl -N http://127.0.0.1:8776/api/v1/transcript/bciandroid-main
 ```
 
 Admin status:
