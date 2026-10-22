@@ -49,6 +49,8 @@ jobs:
             gateway/src/server.ts \
             gateway/Dockerfile \
             gateway/package.json \
+            gateway/test/smoke.sh \
+            gateway/test/publish-transcript.ts \
             render.yaml
 
       - name: Smoke-test gateway
