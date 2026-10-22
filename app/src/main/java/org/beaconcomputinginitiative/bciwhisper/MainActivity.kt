@@ -184,9 +184,25 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+
+        if (
+            currentScreen ==
+            Screen.MONITOR
+        ) {
+            spectrumView
+                ?.onResume()
+        }
+
         publisherCredentialConfigured =
             publisherCredentials.isConfigured()
         renderSnapshot()
+    }
+
+    override fun onPause() {
+        spectrumView
+            ?.onPause()
+
+        super.onPause()
     }
 
     override fun onStop() {
@@ -669,6 +685,14 @@ class MainActivity : Activity() {
     private fun showScreen(screen: Screen) {
         currentScreen = screen
         content.removeAllViews()
+
+        if (
+            screen !=
+            Screen.MONITOR
+        ) {
+            spectrumView =
+                null
+        }
 
         listOf(
             monitorTab to Screen.MONITOR,
