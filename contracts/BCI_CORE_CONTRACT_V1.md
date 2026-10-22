@@ -101,10 +101,11 @@ MONITORING
 
 Baseline progress is measured in seconds and must be monotonic during a healthy session.
 
-Two explicit stall conditions exist:
+Three explicit startup/progress failure conditions exist:
 
-1. **Capture stall:** no increase in captured PCM frames for 1,500 ms while monitoring is supposed to be running.
-2. **Baseline stall:** PCM frames continue to arrive, but baseline progress does not advance for 3,000 ms.
+1. **First-frame timeout:** after native startup, the first PCM frame must arrive within 4,000 ms.
+2. **Capture stall:** after PCM has started, captured frame count may not stop advancing for 1,500 ms while monitoring is supposed to be running.
+3. **Baseline stall:** PCM frames continue to arrive, but baseline progress does not advance for 3,000 ms.
 
 Both are fatal for that monitoring session because continuing would leave the UI appearing active while the signal pipeline is no longer making valid progress.
 
