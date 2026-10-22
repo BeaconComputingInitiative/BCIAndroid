@@ -16,7 +16,6 @@ import java.nio.FloatBuffer
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
 import kotlin.math.exp
-import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
 
@@ -57,14 +56,6 @@ class Spectrum3DView(
 
         contentDescription =
             "GPU accelerated three dimensional audio spectrum"
-
-        setBackgroundColor(
-            android.graphics.Color.rgb(
-                7,
-                10,
-                13
-            )
-        )
     }
 
     fun setSuspended(
@@ -147,7 +138,7 @@ class Spectrum3DView(
             return
         }
 
-        val frameInterval =
+        val interval =
             if (computeBusy) {
                 BUSY_FRAME_INTERVAL_NANOS
             } else {
@@ -159,7 +150,7 @@ class Spectrum3DView(
                 0L ||
             frameTimeNanos -
                 lastFrameNanos >=
-            frameInterval
+            interval
         ) {
             lastFrameNanos =
                 frameTimeNanos
@@ -200,6 +191,11 @@ class Spectrum3DView(
                 BANDS
             )
 
+        private val snapshot =
+            FloatArray(
+                BANDS
+            )
+
         private val current =
             FloatArray(
                 BANDS
@@ -216,6 +212,23 @@ class Spectrum3DView(
 
         private val stateLock =
             Any()
+
+        private val scratch =
+            FloatArray(
+                MAX_VERTEX_FLOATS
+            )
+
+        private val vertexBuffer:
+            FloatBuffer =
+            ByteBuffer
+                .allocateDirect(
+                    MAX_VERTEX_FLOATS *
+                        4
+                )
+                .order(
+                    ByteOrder.nativeOrder()
+                )
+                .asFloatBuffer()
 
         private var lockLowHz =
             0f
@@ -402,11 +415,6 @@ class Spectrum3DView(
             lastRenderNanos =
                 now
 
-            val snapshot =
-                FloatArray(
-                    BANDS
-                )
-
             synchronized(
                 stateLock
             ) {
@@ -511,14 +519,8 @@ class Spectrum3DView(
         }
 
         private fun drawPerspectiveGrid() {
-            val vertices =
-                ArrayList<Float>(
-                    4 *
-                        (
-                            11 +
-                                9
-                            )
-                )
+            var cursor =
+                0
 
             for (
                 index in
@@ -534,13 +536,21 @@ class Spectrum3DView(
                     x *
                         0.18f
 
-                vertices +=
+                scratch[
+                    cursor++
+                ] =
                     x
-                vertices +=
+                scratch[
+                    cursor++
+                ] =
                     -0.84f
-                vertices +=
+                scratch[
+                    cursor++
+                ] =
                     horizonX
-                vertices +=
+                scratch[
+                    cursor++
+                ] =
                     0.60f
             }
 
@@ -568,20 +578,28 @@ class Spectrum3DView(
                                 curved
                             )
 
-                vertices +=
+                scratch[
+                    cursor++
+                ] =
                     -1f +
                         inset
-                vertices +=
+                scratch[
+                    cursor++
+                ] =
                     y
-                vertices +=
+                scratch[
+                    cursor++
+                ] =
                     1f -
                         inset
-                vertices +=
+                scratch[
+                    cursor++
+                ] =
                     y
             }
 
-            drawVertices(
-                vertices,
+            drawScratch(
+                cursor,
                 GLES20.GL_LINES,
                 0.28f,
                 0.55f,
@@ -591,6 +609,9 @@ class Spectrum3DView(
         }
 
         private fun drawWaterfall() {
+            var cursor =
+                0
+
             for (
                 depth in
                 DEPTH -
@@ -637,17 +658,13 @@ class Spectrum3DView(
                         depth
                     ]
 
-                val vertices =
-                    ArrayList<Float>(
-                        BANDS *
-                            2
-                    )
-
                 for (
                     index in
-                    0 until BANDS
+                    0 until
+                        BANDS -
+                            1
                 ) {
-                    val x =
+                    val x0 =
                         left +
                             span *
                                 index /
@@ -656,30 +673,55 @@ class Spectrum3DView(
                                         1
                                     )
 
-                    val y =
+                    val x1 =
+                        left +
+                            span *
+                                (
+                                    index +
+                                        1
+                                    ) /
+                                (
+                                    BANDS -
+                                        1
+                                    )
+
+                    scratch[
+                        cursor++
+                    ] =
+                        x0
+                    scratch[
+                        cursor++
+                    ] =
                         yBase +
                             row[
                                 index
                             ] *
                             amp
 
-                    vertices +=
-                        x
-                    vertices +=
-                        y
+                    scratch[
+                        cursor++
+                    ] =
+                        x1
+                    scratch[
+                        cursor++
+                    ] =
+                        yBase +
+                            row[
+                                index +
+                                    1
+                            ] *
+                            amp
                 }
-
-                drawVertices(
-                    vertices,
-                    GLES20.GL_LINE_STRIP,
-                    0.0f,
-                    0.85f,
-                    0.90f,
-                    0.10f +
-                        0.52f *
-                            perspective
-                )
             }
+
+            drawScratch(
+                cursor,
+                GLES20.GL_LINES,
+                0.0f,
+                0.85f,
+                0.90f,
+                0.36f
+            )
         }
 
         private fun drawFrontBars() {
@@ -701,6 +743,9 @@ class Spectrum3DView(
                         left
                     ) /
                     BANDS
+
+            var cursor =
+                0
 
             for (
                 index in
@@ -737,46 +782,65 @@ class Spectrum3DView(
                         value *
                             height
 
-                val vertices =
-                    listOf(
-                        x0,
-                        bottom,
-                        x1,
-                        bottom,
-                        x0,
-                        y1,
-                        x0,
-                        y1,
-                        x1,
-                        bottom,
-                        x1,
-                        y1
-                    )
+                scratch[
+                    cursor++
+                ] =
+                    x0
+                scratch[
+                    cursor++
+                ] =
+                    bottom
+                scratch[
+                    cursor++
+                ] =
+                    x1
+                scratch[
+                    cursor++
+                ] =
+                    bottom
+                scratch[
+                    cursor++
+                ] =
+                    x0
+                scratch[
+                    cursor++
+                ] =
+                    y1
 
-                val blend =
-                    index.toFloat() /
-                        (
-                            BANDS -
-                                1
-                            )
-
-                drawVertices(
-                    vertices,
-                    GLES20.GL_TRIANGLES,
-                    0.48f *
-                        (
-                            1f -
-                                blend
-                            ),
-                    0.09f +
-                        0.76f *
-                            blend,
-                    0.20f +
-                        0.70f *
-                            blend,
-                    0.86f
-                )
+                scratch[
+                    cursor++
+                ] =
+                    x0
+                scratch[
+                    cursor++
+                ] =
+                    y1
+                scratch[
+                    cursor++
+                ] =
+                    x1
+                scratch[
+                    cursor++
+                ] =
+                    bottom
+                scratch[
+                    cursor++
+                ] =
+                    x1
+                scratch[
+                    cursor++
+                ] =
+                    y1
             }
+
+            drawScratch(
+                cursor,
+                GLES20.GL_TRIANGLES,
+                0.0f,
+                0.85f,
+                0.90f,
+                0.86f
+            )
         }
 
         private fun drawLockBand() {
@@ -863,24 +927,57 @@ class Spectrum3DView(
                     1.80f *
                         highN
 
-            val vertices =
-                listOf(
-                    x0,
-                    -0.82f,
-                    x1,
-                    -0.82f,
-                    x0,
-                    0.58f,
-                    x0,
-                    0.58f,
-                    x1,
-                    -0.82f,
-                    x1,
-                    0.58f
-                )
+            scratch[
+                0
+            ] =
+                x0
+            scratch[
+                1
+            ] =
+                -0.82f
+            scratch[
+                2
+            ] =
+                x1
+            scratch[
+                3
+            ] =
+                -0.82f
+            scratch[
+                4
+            ] =
+                x0
+            scratch[
+                5
+            ] =
+                0.58f
+            scratch[
+                6
+            ] =
+                x0
+            scratch[
+                7
+            ] =
+                0.58f
+            scratch[
+                8
+            ] =
+                x1
+            scratch[
+                9
+            ] =
+                -0.82f
+            scratch[
+                10
+            ] =
+                x1
+            scratch[
+                11
+            ] =
+                0.58f
 
-            drawVertices(
-                vertices,
+            drawScratch(
+                12,
                 GLES20.GL_TRIANGLES,
                 0.68f,
                 0.08f,
@@ -888,17 +985,41 @@ class Spectrum3DView(
                 0.18f
             )
 
-            drawVertices(
-                listOf(
-                    x0,
-                    -0.82f,
-                    x0,
-                    0.58f,
-                    x1,
-                    -0.82f,
-                    x1,
-                    0.58f
-                ),
+            scratch[
+                0
+            ] =
+                x0
+            scratch[
+                1
+            ] =
+                -0.82f
+            scratch[
+                2
+            ] =
+                x0
+            scratch[
+                3
+            ] =
+                0.58f
+            scratch[
+                4
+            ] =
+                x1
+            scratch[
+                5
+            ] =
+                -0.82f
+            scratch[
+                6
+            ] =
+                x1
+            scratch[
+                7
+            ] =
+                0.58f
+
+            drawScratch(
+                8,
                 GLES20.GL_LINES,
                 1.0f,
                 0.25f,
@@ -907,8 +1028,8 @@ class Spectrum3DView(
             )
         }
 
-        private fun drawVertices(
-            vertices: List<Float>,
+        private fun drawScratch(
+            floatCount: Int,
             primitive: Int,
             red: Float,
             green: Float,
@@ -916,31 +1037,25 @@ class Spectrum3DView(
             alpha: Float
         ) {
             if (
-                vertices.isEmpty()
+                floatCount <=
+                    0
             ) {
                 return
             }
 
-            val array =
-                FloatArray(
-                    vertices.size
+            vertexBuffer
+                .clear()
+
+            vertexBuffer
+                .put(
+                    scratch,
+                    0,
+                    floatCount
                 )
 
-            for (
-                index in
-                vertices.indices
-            ) {
-                array[
-                    index
-                ] =
-                    vertices[
-                        index
-                    ]
-            }
-
-            val buffer =
-                floatBuffer(
-                    array
+            vertexBuffer
+                .position(
+                    0
                 )
 
             GLES20.glUniform4f(
@@ -961,13 +1076,13 @@ class Spectrum3DView(
                 GLES20.GL_FLOAT,
                 false,
                 0,
-                buffer
+                vertexBuffer
             )
 
             GLES20.glDrawArrays(
                 primitive,
                 0,
-                array.size /
+                floatCount /
                     2
             )
 
@@ -975,27 +1090,6 @@ class Spectrum3DView(
                 positionHandle
             )
         }
-
-        private fun floatBuffer(
-            values: FloatArray
-        ): FloatBuffer =
-            ByteBuffer
-                .allocateDirect(
-                    values.size *
-                        4
-                )
-                .order(
-                    ByteOrder.nativeOrder()
-                )
-                .asFloatBuffer()
-                .apply {
-                    put(
-                        values
-                    )
-                    position(
-                        0
-                    )
-                }
 
         private fun buildProgram(
             vertex: String,
@@ -1013,21 +1107,21 @@ class Spectrum3DView(
                     fragment
                 )
 
-            val program =
+            val result =
                 GLES20.glCreateProgram()
 
             GLES20.glAttachShader(
-                program,
+                result,
                 vertexShader
             )
 
             GLES20.glAttachShader(
-                program,
+                result,
                 fragmentShader
             )
 
             GLES20.glLinkProgram(
-                program
+                result
             )
 
             val linked =
@@ -1036,7 +1130,7 @@ class Spectrum3DView(
                 )
 
             GLES20.glGetProgramiv(
-                program,
+                result,
                 GLES20.GL_LINK_STATUS,
                 linked,
                 0
@@ -1051,11 +1145,11 @@ class Spectrum3DView(
                 val message =
                     GLES20
                         .glGetProgramInfoLog(
-                            program
+                            result
                         )
 
                 GLES20.glDeleteProgram(
-                    program
+                    result
                 )
 
                 error(
@@ -1072,7 +1166,7 @@ class Spectrum3DView(
                 fragmentShader
             )
 
-            return program
+            return result
         }
 
         private fun compileShader(
@@ -1137,6 +1231,14 @@ class Spectrum3DView(
 
         private const val DEPTH =
             20
+
+        private const val MAX_VERTEX_FLOATS =
+            DEPTH *
+                (
+                    BANDS -
+                        1
+                    ) *
+                4
 
         private const val NORMAL_FRAME_INTERVAL_NANOS =
             1_000_000_000L /
