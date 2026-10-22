@@ -29,8 +29,8 @@ android {
         applicationId = "org.beaconcomputinginitiative.bciwhisper"
         minSdk = 28
         targetSdk = 36
-        versionCode = 16
-        versionName = "6.0-android-alpha16"
+        versionCode = 17
+        versionName = "6.0-android-alpha17"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -38,7 +38,10 @@ android {
 
         externalNativeBuild {
             cmake {
-                arguments += listOf("-DCMAKE_BUILD_TYPE=Release")
+                arguments += listOf(
+                    "-DCMAKE_BUILD_TYPE=Release",
+                    "-DANDROID_STL=c++_shared"
+                )
             }
         }
     }
@@ -69,6 +72,7 @@ android {
 
     buildFeatures {
         buildConfig = true
+        prefab = true
     }
 
     externalNativeBuild {
@@ -82,5 +86,6 @@ android {
 dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.github.wendykierp:JTransforms:3.1")
+    implementation("com.google.oboe:oboe:1.11.0")
     testImplementation("junit:junit:4.13.2")
 }
