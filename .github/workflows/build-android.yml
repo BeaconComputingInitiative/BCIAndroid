@@ -264,3 +264,17 @@ jobs:
           else
             gh release create "$TAG" "$APK" "$HASH"               --repo "${{ github.repository }}"               --target "${{ github.sha }}"               --title "BCIWhisper Android v6.0 Alpha 20"               --notes "BCIAndroid Alpha 20 verbose core-contract and robust-error-handling build. Developer Seal: CJB-DEV-2026."
           fi
+
+          # Alpha 20 becomes the authoritative current release only after its
+          # APK and SHA assets exist successfully.
+          gh release edit "$TAG"             --latest             --repo "${{ github.repository }}"
+
+          # User-authorized release cleanup. Delete the previous three release
+          # objects after Alpha 20 is safely published. Tags are intentionally
+          # retained for source-history traceability.
+          for OLD_TAG in             android-v6.0-alpha19             android-v6.0-alpha18             android-v6.0-alpha17
+          do
+            if gh release view "$OLD_TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+              gh release delete "$OLD_TAG"                 --yes                 --repo "${{ github.repository }}"
+            fi
+          done
