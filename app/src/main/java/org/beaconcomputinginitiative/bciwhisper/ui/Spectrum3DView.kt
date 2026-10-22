@@ -1,129 +1,84 @@
+/*
+ * BEACON COMPUTING INITIATIVE
+ * BCIAndroid OpenGL ES Spectrum Renderer
+ * Developer Seal: CJB-DEV-2026
+ * Integrity: SHA-256 emitted by Android CI for each committed revision.
+ */
 package org.beaconcomputinginitiative.bciwhisper.ui
 
 import android.content.Context
-import android.graphics.*
+import android.opengl.GLES20
+import android.opengl.GLSurfaceView
 import android.view.Choreographer
-import android.view.View
-import kotlin.math.*
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.nio.FloatBuffer
+import javax.microedition.khronos.egl.EGLConfig
+import javax.microedition.khronos.opengles.GL10
+import kotlin.math.exp
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.pow
 
 class Spectrum3DView(
     context: Context
-) : View(
+) : GLSurfaceView(
     context
 ), Choreographer.FrameCallback {
-    private val bands = 40
-    private val depth = 20
+    private val renderer =
+        SpectrumRenderer()
 
-    private val target =
-        FloatArray(bands)
+    private var running =
+        false
 
-    private val current =
-        FloatArray(bands)
+    private var suspended =
+        false
 
-    private val history =
-        Array(depth) {
-            FloatArray(bands)
-        }
+    private var computeBusy =
+        false
 
-    private val waterfallPaths =
-        Array(depth) {
-            Path()
-        }
-
-    private var running = false
-    private var suspended = false
-    private var computeBusy = false
-
-    private var phase = 0f
-    private var lastFrameNanos = 0L
-
-    private var lockLowHz = 0f
-    private var lockHighHz = 0f
-    private var sampleRate = 44100f
-
-    private var backdropShader: Shader? = null
-    private var radialShader: Shader? = null
-    private var spectrumShader: Shader? = null
-
-    private val cyan =
-        Color.rgb(
-            0,
-            216,
-            230
-        )
-
-    private val cyanSoft =
-        Color.argb(
-            100,
-            0,
-            216,
-            230
-        )
-
-    private val maroon =
-        Color.rgb(
-            122,
-            23,
-            51
-        )
-
-    private val grid =
-        Color.argb(
-            46,
-            120,
-            185,
-            198
-        )
-
-    private val bg =
-        Color.rgb(
-            7,
-            10,
-            13
-        )
-
-    private val paint =
-        Paint(
-            Paint.ANTI_ALIAS_FLAG
-        )
-
-    private val line =
-        Paint(
-            Paint.ANTI_ALIAS_FLAG
-        ).apply {
-            style =
-                Paint.Style.STROKE
-            strokeWidth = 1f
-        }
-
-    private val glow =
-        Paint(
-            Paint.ANTI_ALIAS_FLAG
-        ).apply {
-            style =
-                Paint.Style.STROKE
-            strokeWidth = 2f
-        }
-
-    private val fill =
-        Paint(
-            Paint.ANTI_ALIAS_FLAG
-        )
+    private var lastFrameNanos =
+        0L
 
     init {
-        setBackgroundColor(bg)
+        setEGLContextClientVersion(
+            2
+        )
+
+        setRenderer(
+            renderer
+        )
+
+        renderMode =
+            RENDERMODE_WHEN_DIRTY
+
+        preserveEGLContextOnPause =
+            true
+
         contentDescription =
-            "Animated three dimensional audio spectrum"
+            "GPU accelerated three dimensional audio spectrum"
+
+        setBackgroundColor(
+            android.graphics.Color.rgb(
+                7,
+                10,
+                13
+            )
+        )
     }
 
     fun setSuspended(
         value: Boolean
     ) {
-        if (suspended == value) {
+        if (
+            suspended ==
+            value
+        ) {
             return
         }
 
-        suspended = value
+        suspended =
+            value
 
         if (suspended) {
             running = false
@@ -142,7 +97,9 @@ class Spectrum3DView(
     fun setComputeBusy(
         value: Boolean
     ) {
-        computeBusy = value
+        computeBusy =
+            value
+
         ensureRunning()
     }
 
@@ -152,146 +109,19 @@ class Spectrum3DView(
         lockHighHz: Double,
         sampleRate: Int
     ) {
-        val n =
-            min(
-                values.size,
-                bands
-            )
-
-        for (i in 0 until n) {
-            target[i] =
-                values[i]
-                    .coerceIn(
-                        0f,
-                        1f
-                    )
-        }
-
-        for (i in n until bands) {
-            target[i] = 0f
-        }
-
-        this.lockLowHz =
-            lockLowHz.toFloat()
-
-        this.lockHighHz =
-            lockHighHz.toFloat()
-
-        this.sampleRate =
+        renderer.submit(
+            values,
+            lockLowHz.toFloat(),
+            lockHighHz.toFloat(),
             sampleRate.toFloat()
+        )
 
         ensureRunning()
     }
 
-    private fun ensureRunning() {
-        if (
-            suspended ||
-            running
-        ) {
-            return
-        }
-
-        running = true
-
-        Choreographer
-            .getInstance()
-            .postFrameCallback(
-                this
-            )
-    }
-
-    override fun onSizeChanged(
-        w: Int,
-        h: Int,
-        oldw: Int,
-        oldh: Int
-    ) {
-        super.onSizeChanged(
-            w,
-            h,
-            oldw,
-            oldh
-        )
-
-        if (
-            w <= 0 ||
-            h <= 0
-        ) {
-            return
-        }
-
-        val wf = w.toFloat()
-        val hf = h.toFloat()
-
-        backdropShader =
-            LinearGradient(
-                0f,
-                0f,
-                0f,
-                hf,
-                intArrayOf(
-                    Color.rgb(
-                        10,
-                        18,
-                        24
-                    ),
-                    Color.rgb(
-                        5,
-                        9,
-                        13
-                    ),
-                    Color.rgb(
-                        3,
-                        5,
-                        8
-                    )
-                ),
-                floatArrayOf(
-                    0f,
-                    0.55f,
-                    1f
-                ),
-                Shader.TileMode.CLAMP
-            )
-
-        radialShader =
-            RadialGradient(
-                wf * 0.5f,
-                hf * 0.74f,
-                wf * 0.62f,
-                intArrayOf(
-                    Color.argb(
-                        34,
-                        0,
-                        216,
-                        230
-                    ),
-                    Color.argb(
-                        10,
-                        122,
-                        23,
-                        51
-                    ),
-                    Color.TRANSPARENT
-                ),
-                floatArrayOf(
-                    0f,
-                    0.55f,
-                    1f
-                ),
-                Shader.TileMode.CLAMP
-            )
-
-        spectrumShader =
-            LinearGradient(
-                0f,
-                hf * 0.90f,
-                0f,
-                hf * 0.28f,
-                maroon,
-                cyan,
-                Shader.TileMode.CLAMP
-            )
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        ensureRunning()
     }
 
     override fun onDetachedFromWindow() {
@@ -325,114 +155,17 @@ class Spectrum3DView(
             }
 
         if (
-            lastFrameNanos != 0L &&
+            lastFrameNanos ==
+                0L ||
             frameTimeNanos -
-                lastFrameNanos <
-                frameInterval
+                lastFrameNanos >=
+            frameInterval
         ) {
-            Choreographer
-                .getInstance()
-                .postFrameCallback(
-                    this
-                )
+            lastFrameNanos =
+                frameTimeNanos
 
-            return
+            requestRender()
         }
-
-        val dt =
-            if (lastFrameNanos == 0L) {
-                1f /
-                    if (computeBusy) {
-                        BUSY_FPS
-                    } else {
-                        NORMAL_FPS
-                    }
-            } else {
-                (
-                    (
-                        frameTimeNanos -
-                            lastFrameNanos
-                        ) /
-                        1_000_000_000.0
-                    )
-                    .toFloat()
-                    .coerceIn(
-                        0.001f,
-                        0.075f
-                    )
-            }
-
-        lastFrameNanos =
-            frameTimeNanos
-
-        val attack =
-            1f -
-                exp(
-                    -dt *
-                        18f
-                )
-
-        val release =
-            1f -
-                exp(
-                    -dt *
-                        6f
-                )
-
-        for (i in 0 until bands) {
-            val smoothing =
-                if (
-                    target[i] >
-                    current[i]
-                ) {
-                    attack
-                } else {
-                    release
-                }
-
-            current[i] +=
-                (
-                    target[i] -
-                        current[i]
-                    ) *
-                    smoothing
-        }
-
-        phase += dt
-
-        if (
-            (
-                phase *
-                    HISTORY_HZ
-                ).toInt() !=
-            (
-                (phase - dt) *
-                    HISTORY_HZ
-                ).toInt()
-        ) {
-            for (
-                z in
-                depth - 1 downTo 1
-            ) {
-                System.arraycopy(
-                    history[z - 1],
-                    0,
-                    history[z],
-                    0,
-                    bands
-                )
-            }
-
-            System.arraycopy(
-                current,
-                0,
-                history[0],
-                0,
-                bands
-            )
-        }
-
-        postInvalidateOnAnimation()
 
         Choreographer
             .getInstance()
@@ -441,598 +174,969 @@ class Spectrum3DView(
             )
     }
 
-    override fun onDraw(
-        canvas: Canvas
-    ) {
-        super.onDraw(canvas)
-
-        val w =
-            width.toFloat()
-
-        val h =
-            height.toFloat()
-
+    private fun ensureRunning() {
         if (
-            w <= 1f ||
-            h <= 1f
+            suspended ||
+            running ||
+            !isAttachedToWindow
         ) {
             return
         }
 
-        drawBackdrop(
-            canvas,
-            w,
-            h
-        )
+        running =
+            true
 
-        drawPerspectiveGrid(
-            canvas,
-            w,
-            h
-        )
-
-        drawWaterfall(
-            canvas,
-            w,
-            h
-        )
-
-        drawFrontSpectrum(
-            canvas,
-            w,
-            h
-        )
-
-        drawLockBand(
-            canvas,
-            w,
-            h
-        )
+        Choreographer
+            .getInstance()
+            .postFrameCallback(
+                this
+            )
     }
 
-    private fun drawBackdrop(
-        canvas: Canvas,
-        w: Float,
-        h: Float
-    ) {
-        fill.shader =
-            backdropShader
-
-        canvas.drawRect(
-            0f,
-            0f,
-            w,
-            h,
-            fill
-        )
-
-        fill.shader =
-            radialShader
-
-        canvas.drawRect(
-            0f,
-            0f,
-            w,
-            h,
-            fill
-        )
-
-        fill.shader = null
-    }
-
-    private fun drawPerspectiveGrid(
-        canvas: Canvas,
-        w: Float,
-        h: Float
-    ) {
-        val horizonY =
-            h * 0.20f
-
-        val floorY =
-            h * 0.92f
-
-        val centerX =
-            w * 0.5f
-
-        line.color = grid
-
-        line.strokeWidth =
-            max(
-                1f,
-                resources
-                    .displayMetrics
-                    .density *
-                    0.7f
+    private class SpectrumRenderer :
+        Renderer {
+        private val target =
+            FloatArray(
+                BANDS
             )
 
-        for (i in 0..10) {
-            val x =
-                w *
-                    i /
-                    10f
-
-            val horizonX =
-                centerX +
-                    (
-                        x -
-                            centerX
-                        ) *
-                        0.18f
-
-            canvas.drawLine(
-                x,
-                floorY,
-                horizonX,
-                horizonY,
-                line
+        private val current =
+            FloatArray(
+                BANDS
             )
-        }
 
-        for (i in 0..8) {
-            val t =
-                i /
-                    8f
-
-            val curved =
-                t * t
-
-            val y =
-                horizonY +
-                    (
-                        floorY -
-                            horizonY
-                        ) *
-                        curved
-
-            val inset =
-                w *
-                    0.40f *
-                    (
-                        1f -
-                            curved
-                        )
-
-            canvas.drawLine(
-                inset,
-                y,
-                w - inset,
-                y,
-                line
-            )
-        }
-    }
-
-    private fun drawWaterfall(
-        canvas: Canvas,
-        w: Float,
-        h: Float
-    ) {
-        val horizonY =
-            h * 0.20f
-
-        val floorY =
-            h * 0.88f
-
-        val centerX =
-            w * 0.5f
-
-        for (
-            z in
-            depth - 1 downTo 0
-        ) {
-            val depthT =
-                z.toFloat() /
-                    (
-                        depth - 1
-                        )
-                        .coerceAtLeast(
-                            1
-                        )
-
-            val perspective =
-                1f -
-                    depthT
-
-            val yBase =
-                horizonY +
-                    (
-                        floorY -
-                            horizonY
-                        ) *
-                        perspective
-                            .pow(
-                                1.7f
-                            )
-
-            val span =
-                w *
-                    (
-                        0.18f +
-                            0.80f *
-                                perspective
-                        )
-
-            val left =
-                centerX -
-                    span /
-                        2f
-
-            val bandW =
-                span /
-                    bands
-
-            val ampScale =
-                h *
-                    (
-                        0.045f +
-                            0.26f *
-                                perspective
-                        )
-
-            val alpha =
-                (
-                    22 +
-                        118 *
-                            perspective
-                    )
-                    .toInt()
-                    .coerceIn(
-                        0,
-                        180
-                    )
-
-            val row =
-                history[z]
-
-            val path =
-                waterfallPaths[z]
-
-            path.reset()
-
-            for (i in 0 until bands) {
-                val x =
-                    left +
-                        (
-                            i +
-                                0.5f
-                            ) *
-                            bandW
-
-                val y =
-                    yBase -
-                        row[i] *
-                            ampScale
-
-                if (i == 0) {
-                    path.moveTo(
-                        x,
-                        y
-                    )
-                } else {
-                    path.lineTo(
-                        x,
-                        y
-                    )
-                }
+        private val history =
+            Array(
+                DEPTH
+            ) {
+                FloatArray(
+                    BANDS
+                )
             }
 
-            line.color =
-                Color.argb(
-                    alpha,
-                    0,
-                    216,
-                    230
+        private val stateLock =
+            Any()
+
+        private var lockLowHz =
+            0f
+
+        private var lockHighHz =
+            0f
+
+        private var sampleRate =
+            44_100f
+
+        private var program =
+            0
+
+        private var positionHandle =
+            0
+
+        private var colorHandle =
+            0
+
+        private var lastRenderNanos =
+            0L
+
+        private var historyAccumulator =
+            0f
+
+        fun submit(
+            values: FloatArray,
+            lowHz: Float,
+            highHz: Float,
+            rate: Float
+        ) {
+            synchronized(
+                stateLock
+            ) {
+                val count =
+                    min(
+                        values.size,
+                        BANDS
+                    )
+
+                for (
+                    index in
+                    0 until count
+                ) {
+                    target[
+                        index
+                    ] =
+                        values[
+                            index
+                        ]
+                            .coerceIn(
+                                0f,
+                                1f
+                            )
+                }
+
+                for (
+                    index in
+                    count until BANDS
+                ) {
+                    target[
+                        index
+                    ] =
+                        0f
+                }
+
+                lockLowHz =
+                    lowHz
+
+                lockHighHz =
+                    highHz
+
+                sampleRate =
+                    rate
+            }
+        }
+
+        override fun onSurfaceCreated(
+            gl: GL10?,
+            config: EGLConfig?
+        ) {
+            program =
+                buildProgram(
+                    VERTEX_SHADER,
+                    FRAGMENT_SHADER
                 )
 
-            line.strokeWidth =
-                1f +
-                    1.5f *
-                        perspective
+            positionHandle =
+                GLES20
+                    .glGetAttribLocation(
+                        program,
+                        "aPosition"
+                    )
 
-            canvas.drawPath(
-                path,
-                line
+            colorHandle =
+                GLES20
+                    .glGetUniformLocation(
+                        program,
+                        "uColor"
+                    )
+
+            GLES20.glEnable(
+                GLES20.GL_BLEND
+            )
+
+            GLES20.glBlendFunc(
+                GLES20.GL_SRC_ALPHA,
+                GLES20.GL_ONE_MINUS_SRC_ALPHA
+            )
+
+            GLES20.glClearColor(
+                0.027f,
+                0.039f,
+                0.051f,
+                1f
             )
         }
-    }
 
-    private fun drawFrontSpectrum(
-        canvas: Canvas,
-        w: Float,
-        h: Float
-    ) {
-        val left =
-            w * 0.05f
+        override fun onSurfaceChanged(
+            gl: GL10?,
+            width: Int,
+            height: Int
+        ) {
+            GLES20.glViewport(
+                0,
+                0,
+                width,
+                height
+            )
+        }
 
-        val right =
-            w * 0.95f
-
-        val bottom =
-            h * 0.90f
-
-        val top =
-            h * 0.28f
-
-        val usable =
-            right -
-                left
-
-        val bandW =
-            usable /
-                bands
-
-        fill.shader =
-            spectrumShader
-
-        fill.alpha = 205
-
-        glow.color =
-            cyanSoft
-
-        glow.strokeWidth =
-            max(
-                1f,
-                bandW *
-                    0.06f
+        override fun onDrawFrame(
+            gl: GL10?
+        ) {
+            GLES20.glClear(
+                GLES20.GL_COLOR_BUFFER_BIT
             )
 
-        for (i in 0 until bands) {
-            val value =
-                current[i]
+            if (
+                program ==
+                0
+            ) {
+                return
+            }
+
+            updateAnimation()
+
+            GLES20.glUseProgram(
+                program
+            )
+
+            drawPerspectiveGrid()
+            drawWaterfall()
+            drawFrontBars()
+            drawLockBand()
+        }
+
+        private fun updateAnimation() {
+            val now =
+                System.nanoTime()
+
+            val dt =
+                if (
+                    lastRenderNanos ==
+                    0L
+                ) {
+                    1f /
+                        30f
+                } else {
+                    (
+                        (
+                            now -
+                                lastRenderNanos
+                            ) /
+                            1_000_000_000.0
+                        )
+                        .toFloat()
+                        .coerceIn(
+                            0.001f,
+                            0.075f
+                        )
+                }
+
+            lastRenderNanos =
+                now
+
+            val snapshot =
+                FloatArray(
+                    BANDS
+                )
+
+            synchronized(
+                stateLock
+            ) {
+                System.arraycopy(
+                    target,
+                    0,
+                    snapshot,
+                    0,
+                    BANDS
+                )
+            }
+
+            val attack =
+                1f -
+                    exp(
+                        -dt *
+                            18f
+                    )
+
+            val release =
+                1f -
+                    exp(
+                        -dt *
+                            6f
+                    )
+
+            for (
+                index in
+                0 until BANDS
+            ) {
+                val smoothing =
+                    if (
+                        snapshot[
+                            index
+                        ] >
+                        current[
+                            index
+                        ]
+                    ) {
+                        attack
+                    } else {
+                        release
+                    }
+
+                current[
+                    index
+                ] +=
+                    (
+                        snapshot[
+                            index
+                        ] -
+                            current[
+                                index
+                            ]
+                        ) *
+                        smoothing
+            }
+
+            historyAccumulator +=
+                dt
+
+            val historyPeriod =
+                1f /
+                    HISTORY_HZ
+
+            if (
+                historyAccumulator >=
+                historyPeriod
+            ) {
+                historyAccumulator %=
+                    historyPeriod
+
+                for (
+                    depth in
+                    DEPTH -
+                        1 downTo 1
+                ) {
+                    System.arraycopy(
+                        history[
+                            depth -
+                                1
+                        ],
+                        0,
+                        history[
+                            depth
+                        ],
+                        0,
+                        BANDS
+                    )
+                }
+
+                System.arraycopy(
+                    current,
+                    0,
+                    history[
+                        0
+                    ],
+                    0,
+                    BANDS
+                )
+            }
+        }
+
+        private fun drawPerspectiveGrid() {
+            val vertices =
+                ArrayList<Float>(
+                    4 *
+                        (
+                            11 +
+                                9
+                            )
+                )
+
+            for (
+                index in
+                0..10
+            ) {
+                val x =
+                    -1f +
+                        2f *
+                            index /
+                            10f
+
+                val horizonX =
+                    x *
+                        0.18f
+
+                vertices +=
+                    x
+                vertices +=
+                    -0.84f
+                vertices +=
+                    horizonX
+                vertices +=
+                    0.60f
+            }
+
+            for (
+                index in
+                0..8
+            ) {
+                val t =
+                    index /
+                        8f
+
+                val curved =
+                    t *
+                        t
+
+                val y =
+                    0.60f -
+                        1.44f *
+                            curved
+
+                val inset =
+                    0.80f *
+                        (
+                            1f -
+                                curved
+                            )
+
+                vertices +=
+                    -1f +
+                        inset
+                vertices +=
+                    y
+                vertices +=
+                    1f -
+                        inset
+                vertices +=
+                    y
+            }
+
+            drawVertices(
+                vertices,
+                GLES20.GL_LINES,
+                0.28f,
+                0.55f,
+                0.62f,
+                0.28f
+            )
+        }
+
+        private fun drawWaterfall() {
+            for (
+                depth in
+                DEPTH -
+                    1 downTo 0
+            ) {
+                val depthT =
+                    depth.toFloat() /
+                        (
+                            DEPTH -
+                                1
+                            )
+                            .coerceAtLeast(
+                                1
+                            )
+
+                val perspective =
+                    1f -
+                        depthT
+
+                val yBase =
+                    0.60f -
+                        1.34f *
+                            perspective
+                                .pow(
+                                    1.7f
+                                )
+
+                val span =
+                    0.34f +
+                        1.56f *
+                            perspective
+
+                val left =
+                    -span /
+                        2f
+
+                val amp =
+                    0.08f +
+                        0.50f *
+                            perspective
+
+                val row =
+                    history[
+                        depth
+                    ]
+
+                val vertices =
+                    ArrayList<Float>(
+                        BANDS *
+                            2
+                    )
+
+                for (
+                    index in
+                    0 until BANDS
+                ) {
+                    val x =
+                        left +
+                            span *
+                                index /
+                                (
+                                    BANDS -
+                                        1
+                                    )
+
+                    val y =
+                        yBase +
+                            row[
+                                index
+                            ] *
+                            amp
+
+                    vertices +=
+                        x
+                    vertices +=
+                        y
+                }
+
+                drawVertices(
+                    vertices,
+                    GLES20.GL_LINE_STRIP,
+                    0.0f,
+                    0.85f,
+                    0.90f,
+                    0.10f +
+                        0.52f *
+                            perspective
+                )
+            }
+        }
+
+        private fun drawFrontBars() {
+            val left =
+                -0.90f
+
+            val right =
+                0.90f
+
+            val bottom =
+                -0.80f
+
+            val height =
+                1.12f
+
+            val width =
+                (
+                    right -
+                        left
+                    ) /
+                    BANDS
+
+            for (
+                index in
+                0 until BANDS
+            ) {
+                val value =
+                    current[
+                        index
+                    ]
+                        .coerceIn(
+                            0f,
+                            1f
+                        )
+
+                val x0 =
+                    left +
+                        index *
+                            width +
+                        width *
+                            0.10f
+
+                val x1 =
+                    left +
+                        (
+                            index +
+                                1
+                            ) *
+                            width -
+                        width *
+                            0.10f
+
+                val y1 =
+                    bottom +
+                        value *
+                            height
+
+                val vertices =
+                    listOf(
+                        x0,
+                        bottom,
+                        x1,
+                        bottom,
+                        x0,
+                        y1,
+                        x0,
+                        y1,
+                        x1,
+                        bottom,
+                        x1,
+                        y1
+                    )
+
+                val blend =
+                    index.toFloat() /
+                        (
+                            BANDS -
+                                1
+                            )
+
+                drawVertices(
+                    vertices,
+                    GLES20.GL_TRIANGLES,
+                    0.48f *
+                        (
+                            1f -
+                                blend
+                            ),
+                    0.09f +
+                        0.76f *
+                            blend,
+                    0.20f +
+                        0.70f *
+                            blend,
+                    0.86f
+                )
+            }
+        }
+
+        private fun drawLockBand() {
+            val low: Float
+            val high: Float
+            val rate: Float
+
+            synchronized(
+                stateLock
+            ) {
+                low =
+                    lockLowHz
+                high =
+                    lockHighHz
+                rate =
+                    sampleRate
+            }
+
+            if (
+                high <=
+                    low ||
+                rate <=
+                    0f
+            ) {
+                return
+            }
+
+            val lowLimit =
+                80f
+
+            val highLimit =
+                min(
+                    8500f,
+                    rate /
+                        2f
+                )
+
+            if (
+                highLimit <=
+                    lowLimit
+            ) {
+                return
+            }
+
+            val lowN =
+                (
+                    (
+                        low -
+                            lowLimit
+                        ) /
+                        (
+                            highLimit -
+                                lowLimit
+                            )
+                    )
                     .coerceIn(
                         0f,
                         1f
                     )
 
-            val barHeight =
+            val highN =
                 (
-                    bottom -
-                        top
-                    ) *
-                    value
+                    (
+                        high -
+                            lowLimit
+                        ) /
+                        (
+                            highLimit -
+                                lowLimit
+                            )
+                    )
+                    .coerceIn(
+                        0f,
+                        1f
+                    )
 
             val x0 =
-                left +
-                    i *
-                        bandW +
-                    bandW *
-                        0.10f
+                -0.90f +
+                    1.80f *
+                        lowN
 
             val x1 =
-                left +
-                    (
-                        i +
-                            1
-                        ) *
-                        bandW -
-                    bandW *
-                        0.10f
+                -0.90f +
+                    1.80f *
+                        highN
 
-            val y0 =
-                bottom -
-                    barHeight
+            val vertices =
+                listOf(
+                    x0,
+                    -0.82f,
+                    x1,
+                    -0.82f,
+                    x0,
+                    0.58f,
+                    x0,
+                    0.58f,
+                    x1,
+                    -0.82f,
+                    x1,
+                    0.58f
+                )
 
-            canvas.drawRoundRect(
-                x0,
-                y0,
-                x1,
-                bottom,
-                bandW * 0.18f,
-                bandW * 0.18f,
-                fill
+            drawVertices(
+                vertices,
+                GLES20.GL_TRIANGLES,
+                0.68f,
+                0.08f,
+                0.20f,
+                0.18f
             )
 
-            canvas.drawLine(
-                (
-                    x0 +
-                        x1
-                    ) /
-                    2f,
-                y0,
-                (
-                    x0 +
-                        x1
-                    ) /
-                    2f,
-                bottom,
-                glow
-            )
-        }
-
-        fill.shader = null
-
-        paint.color =
-            Color.argb(
-                210,
-                215,
-                244,
-                248
-            )
-
-        paint.textSize =
-            10f *
-                resources
-                    .displayMetrics
-                    .scaledDensity
-
-        paint.typeface =
-            Typeface.MONOSPACE
-
-        canvas.drawText(
-            "80 Hz",
-            left,
-            h * 0.975f,
-            paint
-        )
-
-        val label =
-            "8.5 kHz"
-
-        canvas.drawText(
-            label,
-            right -
-                paint.measureText(
-                    label
+            drawVertices(
+                listOf(
+                    x0,
+                    -0.82f,
+                    x0,
+                    0.58f,
+                    x1,
+                    -0.82f,
+                    x1,
+                    0.58f
                 ),
-            h * 0.975f,
-            paint
-        )
-    }
-
-    private fun drawLockBand(
-        canvas: Canvas,
-        w: Float,
-        h: Float
-    ) {
-        if (
-            lockHighHz <=
-                lockLowHz ||
-            sampleRate <=
-                0f
-        ) {
-            return
+                GLES20.GL_LINES,
+                1.0f,
+                0.25f,
+                0.42f,
+                0.90f
+            )
         }
 
-        val lowLimit =
-            80f
+        private fun drawVertices(
+            vertices: List<Float>,
+            primitive: Int,
+            red: Float,
+            green: Float,
+            blue: Float,
+            alpha: Float
+        ) {
+            if (
+                vertices.isEmpty()
+            ) {
+                return
+            }
 
-        val highLimit =
-            min(
-                8500f,
-                sampleRate /
-                    2f
+            val array =
+                FloatArray(
+                    vertices.size
+                )
+
+            for (
+                index in
+                vertices.indices
+            ) {
+                array[
+                    index
+                ] =
+                    vertices[
+                        index
+                    ]
+            }
+
+            val buffer =
+                floatBuffer(
+                    array
+                )
+
+            GLES20.glUniform4f(
+                colorHandle,
+                red,
+                green,
+                blue,
+                alpha
             )
 
-        val low =
-            (
-                (
-                    lockLowHz -
-                        lowLimit
-                    ) /
-                    (
-                        highLimit -
-                            lowLimit
+            GLES20.glEnableVertexAttribArray(
+                positionHandle
+            )
+
+            GLES20.glVertexAttribPointer(
+                positionHandle,
+                2,
+                GLES20.GL_FLOAT,
+                false,
+                0,
+                buffer
+            )
+
+            GLES20.glDrawArrays(
+                primitive,
+                0,
+                array.size /
+                    2
+            )
+
+            GLES20.glDisableVertexAttribArray(
+                positionHandle
+            )
+        }
+
+        private fun floatBuffer(
+            values: FloatArray
+        ): FloatBuffer =
+            ByteBuffer
+                .allocateDirect(
+                    values.size *
+                        4
+                )
+                .order(
+                    ByteOrder.nativeOrder()
+                )
+                .asFloatBuffer()
+                .apply {
+                    put(
+                        values
+                    )
+                    position(
+                        0
+                    )
+                }
+
+        private fun buildProgram(
+            vertex: String,
+            fragment: String
+        ): Int {
+            val vertexShader =
+                compileShader(
+                    GLES20.GL_VERTEX_SHADER,
+                    vertex
+                )
+
+            val fragmentShader =
+                compileShader(
+                    GLES20.GL_FRAGMENT_SHADER,
+                    fragment
+                )
+
+            val program =
+                GLES20.glCreateProgram()
+
+            GLES20.glAttachShader(
+                program,
+                vertexShader
+            )
+
+            GLES20.glAttachShader(
+                program,
+                fragmentShader
+            )
+
+            GLES20.glLinkProgram(
+                program
+            )
+
+            val linked =
+                IntArray(
+                    1
+                )
+
+            GLES20.glGetProgramiv(
+                program,
+                GLES20.GL_LINK_STATUS,
+                linked,
+                0
+            )
+
+            if (
+                linked[
+                    0
+                ] ==
+                0
+            ) {
+                val message =
+                    GLES20
+                        .glGetProgramInfoLog(
+                            program
                         )
-                )
-                .coerceIn(
-                    0f,
-                    1f
+
+                GLES20.glDeleteProgram(
+                    program
                 )
 
-        val high =
-            (
-                (
-                    lockHighHz -
-                        lowLimit
-                    ) /
-                    (
-                        highLimit -
-                            lowLimit
+                error(
+                    "OpenGL ES program link failed: " +
+                        message
+                )
+            }
+
+            GLES20.glDeleteShader(
+                vertexShader
+            )
+
+            GLES20.glDeleteShader(
+                fragmentShader
+            )
+
+            return program
+        }
+
+        private fun compileShader(
+            type: Int,
+            source: String
+        ): Int {
+            val shader =
+                GLES20.glCreateShader(
+                    type
+                )
+
+            GLES20.glShaderSource(
+                shader,
+                source
+            )
+
+            GLES20.glCompileShader(
+                shader
+            )
+
+            val compiled =
+                IntArray(
+                    1
+                )
+
+            GLES20.glGetShaderiv(
+                shader,
+                GLES20.GL_COMPILE_STATUS,
+                compiled,
+                0
+            )
+
+            if (
+                compiled[
+                    0
+                ] ==
+                0
+            ) {
+                val message =
+                    GLES20
+                        .glGetShaderInfoLog(
+                            shader
                         )
+
+                GLES20.glDeleteShader(
+                    shader
                 )
-                .coerceIn(
-                    0f,
-                    1f
+
+                error(
+                    "OpenGL ES shader compile failed: " +
+                        message
                 )
+            }
 
-        val left =
-            w * 0.05f
-
-        val right =
-            w * 0.95f
-
-        val x0 =
-            left +
-                (
-                    right -
-                        left
-                    ) *
-                    low
-
-        val x1 =
-            left +
-                (
-                    right -
-                        left
-                    ) *
-                    high
-
-        fill.color =
-            Color.argb(
-                24,
-                122,
-                23,
-                51
-            )
-
-        canvas.drawRect(
-            x0,
-            h * 0.22f,
-            x1,
-            h * 0.91f,
-            fill
-        )
-
-        line.color =
-            Color.argb(
-                210,
-                255,
-                57,
-                101
-            )
-
-        line.strokeWidth =
-            2f *
-                resources
-                    .displayMetrics
-                    .density
-
-        canvas.drawLine(
-            x0,
-            h * 0.22f,
-            x0,
-            h * 0.91f,
-            line
-        )
-
-        canvas.drawLine(
-            x1,
-            h * 0.22f,
-            x1,
-            h * 0.91f,
-            line
-        )
-
-        paint.color =
-            Color.rgb(
-                255,
-                83,
-                119
-            )
-
-        paint.textSize =
-            9f *
-                resources
-                    .displayMetrics
-                    .scaledDensity
-
-        paint.typeface =
-            Typeface.MONOSPACE
-
-        val text =
-            "${lockLowHz.roundToInt()}–${lockHighHz.roundToInt()} Hz"
-
-        canvas.drawText(
-            text,
-            x0 + 6f,
-            h * 0.255f,
-            paint
-        )
+            return shader
+        }
     }
 
     companion object {
-        private const val NORMAL_FPS = 30f
-        private const val BUSY_FPS = 20f
+        private const val BANDS =
+            40
+
+        private const val DEPTH =
+            20
 
         private const val NORMAL_FRAME_INTERVAL_NANOS =
             1_000_000_000L /
@@ -1042,6 +1146,24 @@ class Spectrum3DView(
             1_000_000_000L /
                 20L
 
-        private const val HISTORY_HZ = 18f
+        private const val HISTORY_HZ =
+            18f
+
+        private const val VERTEX_SHADER =
+            """
+            attribute vec2 aPosition;
+            void main() {
+                gl_Position = vec4(aPosition, 0.0, 1.0);
+            }
+            """
+
+        private const val FRAGMENT_SHADER =
+            """
+            precision mediump float;
+            uniform vec4 uColor;
+            void main() {
+                gl_FragColor = uColor;
+            }
+            """
     }
 }
