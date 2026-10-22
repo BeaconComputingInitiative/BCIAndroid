@@ -27,7 +27,7 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     permissions:
-      contents: read
+      contents: write
 
     steps:
       - name: Checkout
@@ -175,3 +175,20 @@ jobs:
           path: out/*
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish Alpha 15 GitHub release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="android-v6.0-alpha15"
+          APK="out/BCIWhisper-v6.0-Android-alpha15-debug.apk"
+          HASH="out/BCIWhisper-v6.0-Android-alpha15-debug.apk.sha256"
+
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$APK" "$HASH"               --clobber               --repo "${{ github.repository }}"
+          else
+            gh release create "$TAG" "$APK" "$HASH"               --repo "${{ github.repository }}"               --target "${{ github.sha }}"               --title "BCIWhisper Android v6.0 Alpha 15"               --notes "BCIAndroid Alpha 15 native-engine build. Developer Seal: CJB-DEV-2026."
+          fi
