@@ -178,6 +178,11 @@ public:
         return copied;
     }
 
+    bool active() const {
+        return mRunning.load(
+            std::memory_order_acquire);
+    }
+
     int32_t actualSampleRate() const {
         return mStream
             ? mStream->getSampleRate()
@@ -392,6 +397,16 @@ Java_org_beaconcomputinginitiative_bciwhisper_audio_NativeAudioEngine_readPcm16(
     }
 
     return count;
+}
+
+extern "C"
+JNIEXPORT jboolean JNICALL
+Java_org_beaconcomputinginitiative_bciwhisper_audio_NativeAudioEngine_captureActive(
+        JNIEnv *,
+        jobject) {
+    return g_engine.active()
+        ? JNI_TRUE
+        : JNI_FALSE;
 }
 
 extern "C"
