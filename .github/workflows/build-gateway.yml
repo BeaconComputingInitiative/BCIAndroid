@@ -8,11 +8,13 @@ on:
     paths:
       - "gateway/**"
       - "render.yaml"
+      - "scripts/verify-module-contracts.py"
       - ".github/workflows/build-gateway.yml"
   pull_request:
     paths:
       - "gateway/**"
       - "render.yaml"
+      - "scripts/verify-module-contracts.py"
       - ".github/workflows/build-gateway.yml"
 
 jobs:
@@ -35,6 +37,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
+      - name: Cross-module compatibility contracts
+        run: python3 scripts/verify-module-contracts.py
+
       - name: Compile-check gateway
         working-directory: gateway
         run: bun run check
@@ -51,7 +56,8 @@ jobs:
             gateway/package.json \
             gateway/test/smoke.sh \
             gateway/test/publish-transcript.ts \
-            render.yaml
+            render.yaml \
+            scripts/verify-module-contracts.py
 
       - name: Smoke-test gateway
         run: bash gateway/test/smoke.sh
