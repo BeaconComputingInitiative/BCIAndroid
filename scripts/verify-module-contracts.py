@@ -475,7 +475,7 @@ require(
     "capture stall threshold does not match core contract",
 )
 require(
-    f'private const val BASELINE_STALL_MS =\n            {contract_baseline["failureRules"]["baselineNoProgressWhilePcmArrivesMs"]}L'
+    f'private const val BASELINE_STALL_MS =\n            {contract_baseline["failureRules"]["baselineNoProgressWhilePcmArrivesMs"]:,}L'.replace(",", "_")
     in audio_service,
     "baseline stall threshold does not match core contract",
 )
