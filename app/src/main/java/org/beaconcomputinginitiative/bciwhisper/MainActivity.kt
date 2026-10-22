@@ -590,7 +590,7 @@ class MainActivity : Activity() {
 
         header.addView(
             TextView(this).apply {
-                text = "ANDROID • v6.0 • ALPHA 16"
+                text = "ANDROID • v6.0 • ALPHA 17"
                 textSize = 10f
                 setTextColor(muted)
                 typeface = uiTypeface
@@ -1237,7 +1237,8 @@ class MainActivity : Activity() {
 
         portCard.addView(
             textView(
-                "✓ Native AudioRecord hardware boundary\n" +
+                "✓ Oboe native low-latency microphone boundary\n" +
+                    "✓ OpenGL ES GPU spectrum/waterfall renderer\n" +
                     "✓ Built-in mic capability probe + preferred-device routing\n" +
                     "✓ Bluetooth communication-device routing\n" +
                     "✓ Low-signal detector tuned to 4 dB RMS SNR / 3 dB spectral excess\n" +
