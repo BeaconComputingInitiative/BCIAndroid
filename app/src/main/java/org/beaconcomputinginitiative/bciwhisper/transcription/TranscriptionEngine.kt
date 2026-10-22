@@ -659,50 +659,90 @@ class TranscriptionEngine(
             }
             .orEmpty()
 
-    private fun ensureModel(): File {
-        val dir =
-            File(
-                context.filesDir,
-                "models"
-            ).apply {
-                mkdirs()
-            }
-
-        val model =
-            File(
-                dir,
-                MODEL_NAME
-            )
-
-        if (
-            model.isFile &&
-            model.length() >
-                1_000_000L
+    private fun ensureModel():
+        File =
+        synchronized(
+            modelLock
         ) {
-            return model
-        }
+            val dir =
+                File(
+                    context.filesDir,
+                    "models"
+                ).apply {
+                    mkdirs()
+                }
 
-        context.assets
-            .open(
-                "models/$MODEL_NAME"
-            )
-            .use {
-                    input ->
+            val model =
+                File(
+                    dir,
+                    MODEL_NAME
+                )
 
-                model.outputStream()
-                    .buffered()
-                    .use {
-                            output ->
-
-                        input.copyTo(
-                            output,
-                            MODEL_COPY_BUFFER_BYTES
-                        )
-                    }
+            if (
+                model.isFile &&
+                model.length() >
+                    1_000_000L
+            ) {
+                return@synchronized model
             }
 
-        return model
-    }
+            val temporary =
+                File(
+                    dir,
+                    MODEL_NAME +
+                        ".copying"
+                )
+
+            context.assets
+                .open(
+                    "models/$MODEL_NAME"
+                )
+                .use {
+                        input ->
+
+                    temporary
+                        .outputStream()
+                        .buffered()
+                        .use {
+                                output ->
+
+                            input.copyTo(
+                                output,
+                                MODEL_COPY_BUFFER_BYTES
+                            )
+                        }
+                }
+
+            check(
+                temporary.length() >
+                    1_000_000L
+            ) {
+                "Bundled Whisper model copy is incomplete"
+            }
+
+            if (
+                model.exists() &&
+                !model.delete()
+            ) {
+                temporary.delete()
+
+                error(
+                    "Unable to replace Whisper model"
+                )
+            }
+
+            check(
+                temporary.renameTo(
+                    model
+                )
+            ) {
+                temporary.delete()
+
+                "Unable to finalize Whisper model"
+            }
+
+            model
+        }
 
     private data class Pcm(
         val sampleRate: Int,
@@ -1008,6 +1048,9 @@ class TranscriptionEngine(
 
         private const val LIVE_MIN_CONTRAST_DB =
             2.0
+
+        private val modelLock =
+            Any()
 
         private val nativeLock =
             Any()
