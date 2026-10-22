@@ -7,6 +7,12 @@
 package org.beaconcomputinginitiative.bciwhisper.broadcast
 
 object BroadcastConfig {
+    const val STREAM_ID =
+        "bciandroid-main"
+
+    const val OUTPUT_CODEC =
+        "mp3"
+
     const val PUBLIC_PLAYER_URL =
         "https://bciandroid-live.onrender.com/"
 
