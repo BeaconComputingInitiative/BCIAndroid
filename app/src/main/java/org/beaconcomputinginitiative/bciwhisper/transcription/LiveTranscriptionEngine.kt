@@ -73,6 +73,9 @@ class LiveTranscriptionEngine(
     private var generation =
         0L
 
+    private var workerEpoch =
+        0L
+
     @Volatile
     private var running =
         false
@@ -120,16 +123,28 @@ class LiveTranscriptionEngine(
             running =
                 true
 
+            workerEpoch +=
+                1L
+
             resetLocked(
                 resetSequence =
                     true
             )
         }
 
+        val epoch =
+            synchronized(
+                lock
+            ) {
+                workerEpoch
+            }
+
         worker =
             Thread(
                 {
-                    workerLoop()
+                    workerLoop(
+                        epoch
+                    )
                 },
                 "BCI-LiveTranscript"
             ).apply {
@@ -152,6 +167,9 @@ class LiveTranscriptionEngine(
                 false
 
             generation +=
+                1L
+
+            workerEpoch +=
                 1L
 
             lock.notifyAll()
@@ -257,7 +275,9 @@ class LiveTranscriptionEngine(
                 lastError
         )
 
-    private fun workerLoop() {
+    private fun workerLoop(
+        epoch: Long
+    ) {
         try {
             check(
                 engine.preload()
@@ -273,6 +293,8 @@ class LiveTranscriptionEngine(
                     ) {
                         while (
                             running &&
+                            epoch ==
+                                workerEpoch &&
                             !readyLocked()
                         ) {
                             lock.wait(
@@ -280,7 +302,11 @@ class LiveTranscriptionEngine(
                             )
                         }
 
-                        if (!running) {
+                        if (
+                            !running ||
+                            epoch !=
+                                workerEpoch
+                        ) {
                             return
                         }
 
@@ -326,11 +352,26 @@ class LiveTranscriptionEngine(
                         lock
                     ) {
                         running &&
+                            epoch ==
+                                workerEpoch &&
                             window.generation ==
                                 generation
                     }
 
                 if (!stillCurrent) {
+                    val workerStillCurrent =
+                        synchronized(
+                            lock
+                        ) {
+                            running &&
+                                epoch ==
+                                    workerEpoch
+                        }
+
+                    if (!workerStillCurrent) {
+                        return
+                    }
+
                     continue
                 }
 
@@ -448,7 +489,7 @@ class LiveTranscriptionEngine(
                     lastProcessedEndFrame
 
             if (
-                elapsed >
+                elapsed >=
                 hopSamples *
                     2L
             ) {
