@@ -45,10 +45,17 @@ class LiveTranscriptionEngine(
     private val lock =
         Object()
 
+    private val windowSamples =
+        sampleRate *
+            WINDOW_SECONDS
+
+    private val hopSamples =
+        sampleRate.toLong() *
+            HOP_SECONDS
+
     private val ring =
         ShortArray(
-            sampleRate *
-                WINDOW_SECONDS
+            windowSamples
         )
 
     private var writeIndex =
@@ -314,35 +321,17 @@ class LiveTranscriptionEngine(
                 lastDecodeMs =
                     result.decodeMs
 
-                synchronized(
-                    lock
-                ) {
-                    if (
-                        !running ||
-                        window.generation !=
-                            generation
+                val stillCurrent =
+                    synchronized(
+                        lock
                     ) {
-                        continue
+                        running &&
+                            window.generation ==
+                                generation
                     }
 
-                    val newestFrames =
-                        totalFrames -
-                            window.endFrame
-
-                    if (
-                        newestFrames >
-                        HOP_SAMPLES *
-                            2L
-                    ) {
-                        skippedWindows +=
-                            (
-                                newestFrames /
-                                    HOP_SAMPLES
-                                )
-                                    .coerceAtLeast(
-                                        1L
-                                    )
-                    }
+                if (!stillCurrent) {
+                    continue
                 }
 
                 result.segments
@@ -433,7 +422,7 @@ class LiveTranscriptionEngine(
         Boolean {
         if (
             size <
-            WINDOW_SAMPLES
+            windowSamples
         ) {
             return false
         }
@@ -442,7 +431,7 @@ class LiveTranscriptionEngine(
             totalFrames -
                 lastProcessedEndFrame
             ) >=
-            HOP_SAMPLES
+            hopSamples
     }
 
     private fun snapshotWindowLocked():
@@ -460,13 +449,13 @@ class LiveTranscriptionEngine(
 
             if (
                 elapsed >
-                HOP_SAMPLES *
+                hopSamples *
                     2L
             ) {
                 skippedWindows +=
                     (
                         elapsed /
-                            HOP_SAMPLES -
+                            hopSamples -
                             1L
                         )
                         .coerceAtLeast(
@@ -477,12 +466,12 @@ class LiveTranscriptionEngine(
 
         val samples =
             ShortArray(
-                WINDOW_SAMPLES
+                windowSamples
             )
 
         var source =
             writeIndex -
-                WINDOW_SAMPLES
+                windowSamples
 
         if (
             source <
@@ -519,7 +508,7 @@ class LiveTranscriptionEngine(
                 samples,
             startFrame =
                 endFrame -
-                    WINDOW_SAMPLES,
+                    windowSamples,
             endFrame =
                 endFrame,
             generation =
@@ -540,8 +529,7 @@ class LiveTranscriptionEngine(
             0L
 
         lastProcessedEndFrame =
-            -
-            HOP_SAMPLES
+            -hopSamples
 
         generation +=
             1L
@@ -593,12 +581,5 @@ class LiveTranscriptionEngine(
         private const val HOP_SECONDS =
             2
 
-        private val WINDOW_SAMPLES =
-            44_100 *
-                WINDOW_SECONDS
-
-        private val HOP_SAMPLES =
-            44_100L *
-                HOP_SECONDS
     }
 }
