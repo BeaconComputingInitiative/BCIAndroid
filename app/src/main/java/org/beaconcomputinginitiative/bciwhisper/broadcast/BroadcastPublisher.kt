@@ -13,6 +13,7 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString.Companion.toByteString
+import org.json.JSONObject
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.math.min
@@ -30,6 +31,8 @@ class BroadcastPublisher {
         val state: State,
         val bytesSent: Long,
         val droppedFrames: Long,
+        val transcriptsSent: Long,
+        val droppedTranscripts: Long,
         val lastError: String?
     )
 
@@ -46,6 +49,8 @@ class BroadcastPublisher {
     @Volatile private var lastError: String? = null
     @Volatile private var bytesSent = 0L
     @Volatile private var droppedFrames = 0L
+    @Volatile private var transcriptsSent = 0L
+    @Volatile private var droppedTranscripts = 0L
     @Volatile private var requested = false
 
     private var url = ""
@@ -68,6 +73,8 @@ class BroadcastPublisher {
         retryAttempt = 0
         bytesSent = 0
         droppedFrames = 0
+        transcriptsSent = 0
+        droppedTranscripts = 0
         lastError = null
 
         socket?.cancel()
@@ -90,6 +97,8 @@ class BroadcastPublisher {
         state = state,
         bytesSent = bytesSent,
         droppedFrames = droppedFrames,
+        transcriptsSent = transcriptsSent,
+        droppedTranscripts = droppedTranscripts,
         lastError = lastError
     )
 
@@ -116,6 +125,105 @@ class BroadcastPublisher {
             bytesSent += pcm.size
         } else {
             droppedFrames += 1
+        }
+    }
+
+    fun submitTranscript(
+        sequence: Long,
+        startMs: Long,
+        endMs: Long,
+        speaker: String?,
+        text: String,
+        decodeMs: Long
+    ): Boolean {
+        val ws =
+            socket
+                ?: return false
+
+        if (
+            state !=
+            State.LIVE
+        ) {
+            return false
+        }
+
+        val cleanText =
+            text
+                .trim()
+                .take(
+                    MAX_TRANSCRIPT_TEXT_CHARS
+                )
+
+        if (
+            cleanText.isBlank()
+        ) {
+            return false
+        }
+
+        // Captions are lower priority than audio. If the socket starts
+        // backing up, drop transcript messages first so playback remains
+        // continuous.
+        if (
+            ws.queueSize() >
+            MAX_TRANSCRIPT_QUEUE_BYTES
+        ) {
+            droppedTranscripts +=
+                1L
+
+            return false
+        }
+
+        val payload =
+            JSONObject()
+                .put(
+                    "type",
+                    "transcript"
+                )
+                .put(
+                    "sequence",
+                    sequence
+                )
+                .put(
+                    "startMs",
+                    startMs
+                )
+                .put(
+                    "endMs",
+                    endMs
+                )
+                .put(
+                    "speaker",
+                    speaker
+                        ?: JSONObject.NULL
+                )
+                .put(
+                    "text",
+                    cleanText
+                )
+                .put(
+                    "decodeMs",
+                    decodeMs
+                )
+                .put(
+                    "final",
+                    true
+                )
+                .toString()
+
+        return if (
+            ws.send(
+                payload
+            )
+        ) {
+            transcriptsSent +=
+                1L
+
+            true
+        } else {
+            droppedTranscripts +=
+                1L
+
+            false
         }
     }
 
@@ -212,6 +320,15 @@ class BroadcastPublisher {
     }
 
     companion object {
-        private const val MAX_WEBSOCKET_QUEUE_BYTES = 512L * 1024L
+        private const val MAX_WEBSOCKET_QUEUE_BYTES =
+            512L *
+                1024L
+
+        private const val MAX_TRANSCRIPT_QUEUE_BYTES =
+            256L *
+                1024L
+
+        private const val MAX_TRANSCRIPT_TEXT_CHARS =
+            1000
     }
 }

@@ -11,7 +11,7 @@ import { timingSafeEqual } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
-const VERSION = "1.0.0";
+const VERSION = "1.1.0";
 const PROTOCOL = "bci-broadcast-v1";
 const SERVICE = "BCIAndroid Live Gateway";
 
@@ -136,6 +136,24 @@ type Listener = {
     ReadableStreamDefaultController<Uint8Array>;
 };
 
+type TranscriptSegment = {
+  id: string;
+  sequence: number;
+  startMs: number;
+  endMs: number;
+  speaker: string | null;
+  text: string;
+  decodeMs: number;
+  final: boolean;
+  receivedAt: string;
+};
+
+type TranscriptListener = {
+  id: string;
+  controller:
+    ReadableStreamDefaultController<Uint8Array>;
+};
+
 const started = Date.now();
 
 let publisher:
@@ -147,6 +165,7 @@ let bytesReceived = 0;
 let chunksReceived = 0;
 let rejectedPublishers = 0;
 let rejectedListeners = 0;
+let rejectedTranscriptListeners = 0;
 
 let publisherInputCodec:
   PublisherCodec | null =
@@ -162,6 +181,29 @@ let metadata = {
 
 const listeners =
   new Map<string, Listener>();
+
+const transcriptListeners =
+  new Map<string, TranscriptListener>();
+
+const transcriptHistory:
+  TranscriptSegment[] =
+  [];
+
+const transcriptEncoder =
+  new TextEncoder();
+
+const transcriptHistoryLimit =
+  Math.min(
+    500,
+    Math.max(
+      20,
+      Number.parseInt(
+        Bun.env.BCI_TRANSCRIPT_HISTORY_LIMIT ||
+          "120",
+        10
+      ) || 120
+    )
+  );
 
 const buffer:
   Uint8Array[] =
@@ -228,6 +270,94 @@ function closeListeners() {
 
   listeners.clear();
 }
+
+function encodeTranscriptEvent(
+  name: string,
+  payload: unknown
+) {
+  return transcriptEncoder.encode(
+    "event: " +
+      name +
+      "\ndata: " +
+      JSON.stringify(payload) +
+      "\n\n"
+  );
+}
+
+function fanoutTranscriptEvent(
+  name: string,
+  payload: unknown
+) {
+  const encoded =
+    encodeTranscriptEvent(
+      name,
+      payload
+    );
+
+  for (
+    const [id, listener]
+    of transcriptListeners
+  ) {
+    try {
+      listener.controller.enqueue(
+        encoded
+      );
+    } catch {
+      transcriptListeners.delete(
+        id
+      );
+    }
+  }
+}
+
+function pushTranscript(
+  segment: TranscriptSegment
+) {
+  transcriptHistory.push(
+    segment
+  );
+
+  while (
+    transcriptHistory.length >
+    transcriptHistoryLimit
+  ) {
+    transcriptHistory.shift();
+  }
+
+  fanoutTranscriptEvent(
+    "transcript",
+    segment
+  );
+}
+
+function resetTranscriptHistory() {
+  transcriptHistory.length =
+    0;
+
+  fanoutTranscriptEvent(
+    "reset",
+    {
+      streamId,
+    }
+  );
+}
+
+const transcriptHeartbeat =
+  setInterval(
+    () => {
+      fanoutTranscriptEvent(
+        "heartbeat",
+        {
+          ts:
+            new Date()
+              .toISOString(),
+        }
+      );
+    },
+    15_000
+  );
+
+transcriptHeartbeat.unref?.();
 
 function stopTranscoder() {
   const proc = transcoder;
@@ -388,40 +518,189 @@ function startPcmTranscoder(
 
 const playerHtml =
   `<!doctype html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width">
-<title>BCIAndroid StreamPlayer</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>BCIWhisper Live Stream</title>
 <style>
-body{margin:0;min-height:100vh;display:grid;place-items:center;background:#05070a;color:#dce8ee;font-family:system-ui}
-main{width:min(720px,90vw);padding:28px;border:1px solid #30363d;border-radius:16px;background:#0c1117}
-h1{color:#00d8e6}.brand{color:#7a1733;font-weight:700;letter-spacing:.08em}audio{width:100%}
-.meta{opacity:.72}
+:root{--bg:#05070a;--panel:#0c1117;--panel2:#101821;--line:#26323d;--text:#e5eef3;--muted:#8fa2ad;--cyan:#00d8e6;--green:#21d86b}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at 30% 0,#0c1c28 0,#05070a 40%);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,sans-serif}
+header{height:72px;padding:0 28px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);background:#071018dd;backdrop-filter:blur(12px)}
+.brand{font-weight:800;letter-spacing:.08em}.brand strong{color:var(--cyan)}.sub{color:var(--muted);font-weight:500;letter-spacing:0;margin-left:8px}
+.pill{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--line);border-radius:999px;color:var(--muted)}.dot{width:10px;height:10px;border-radius:50%;background:#5a6570}.dot.live{background:var(--green);box-shadow:0 0 16px #21d86b88}
+main{width:min(1320px,96vw);margin:24px auto;display:grid;grid-template-columns:minmax(0,1.7fr) minmax(320px,.8fr);gap:18px}.card{border:1px solid var(--line);border-radius:16px;background:linear-gradient(180deg,#0d151d,#091017);overflow:hidden}.cardhead{padding:16px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:12px}
+h1,h2,p{margin:0}h1{font-size:20px}h2{font-size:17px}.meta{color:var(--muted);font-size:13px}.playerbody{padding:18px}
+canvas{display:block;width:100%;height:260px;border-radius:12px;background:linear-gradient(180deg,#06101a,#07121a);border:1px solid #152634}
+audio{width:100%;margin-top:16px}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:14px}.stat{padding:12px;border-radius:10px;background:var(--panel2);border:1px solid #192631}.stat b{display:block;margin-top:4px;font-size:15px}.transcript{height:610px;display:flex;flex-direction:column}.captions{padding:8px 16px 18px;overflow:auto;flex:1}.empty{color:var(--muted);padding:22px 4px}.caption{padding:13px 0;border-bottom:1px solid #18232c}.captiontop{display:flex;gap:10px;align-items:center;color:var(--muted);font-size:12px}.speaker{color:var(--cyan);font-weight:700}.captiontext{font-size:16px;line-height:1.45;margin-top:5px}.footer{grid-column:1/-1;padding:14px 18px;display:flex;justify-content:space-between;gap:12px;color:var(--muted);font-size:12px}
+@media(max-width:820px){header{padding:0 16px}.sub{display:none}main{grid-template-columns:1fr;margin:12px auto}.transcript{height:440px}.stats{grid-template-columns:1fr 1fr}canvas{height:190px}}
 </style>
 </head>
 <body>
+<header>
+  <div class="brand"><strong>BCI</strong> WHISPER <span class="sub">Live Stream Player</span></div>
+  <div class="pill"><span id="dot" class="dot"></span><span id="status">Checking stream…</span></div>
+</header>
 <main>
-<div class="brand">BEACON COMPUTING INITIATIVE</div>
-<h1>BCIANDROID LIVE</h1>
-<p id="s">Checking stream…</p>
-<p class="meta">Dedicated Android broadcast gateway</p>
-<audio controls src="/live/${streamId}"></audio>
+  <section class="card">
+    <div class="cardhead">
+      <div><h1>Live Audio</h1><div class="meta">Public BCIAndroid broadcast</div></div>
+      <div id="format" class="meta">44.1 kHz · mono · MP3</div>
+    </div>
+    <div class="playerbody">
+      <canvas id="wave" width="1000" height="260" aria-label="Live audio waveform"></canvas>
+      <audio id="audio" controls preload="none" src="/live/${streamId}"></audio>
+      <div class="stats">
+        <div class="stat"><span class="meta">State</span><b id="streamState">OFFLINE</b></div>
+        <div class="stat"><span class="meta">Listeners</span><b id="listeners">0</b></div>
+        <div class="stat"><span class="meta">Captions</span><b id="captionCount">0</b></div>
+        <div class="stat"><span class="meta">Output</span><b id="codec">MP3</b></div>
+      </div>
+    </div>
+  </section>
+
+  <aside class="card transcript">
+    <div class="cardhead">
+      <div><h2>Live Transcription</h2><div class="meta">whisper.cpp captions</div></div>
+      <div class="pill"><span class="dot live"></span><span id="ccState">Connected</span></div>
+    </div>
+    <div id="captions" class="captions">
+      <div id="empty" class="empty">Waiting for live speech…</div>
+    </div>
+  </aside>
+
+  <section class="card footer">
+    <span>BEACON COMPUTING INITIATIVE · BCIWhisper</span>
+    <span id="captionMeta">Captions reconnect automatically</span>
+  </section>
+</main>
 <script>
+const audio=document.getElementById('audio');
+const statusEl=document.getElementById('status');
+const dot=document.getElementById('dot');
+const streamState=document.getElementById('streamState');
+const listenerEl=document.getElementById('listeners');
+const formatEl=document.getElementById('format');
+const codecEl=document.getElementById('codec');
+const captionsEl=document.getElementById('captions');
+const captionCountEl=document.getElementById('captionCount');
+const ccState=document.getElementById('ccState');
+const captionMeta=document.getElementById('captionMeta');
+const seen=new Set();
+let captionCount=0;
+let lastLive=null;
+let audioContext=null;
+let analyser=null;
+let source=null;
+
+function formatTime(ms){
+  const total=Math.max(0,Math.floor(Number(ms||0)/1000));
+  const m=Math.floor(total/60);
+  const sec=String(total%60).padStart(2,'0');
+  return String(m).padStart(2,'0')+':'+sec;
+}
+
+function resetCaptions(){
+  seen.clear();
+  captionCount=0;
+  captionCountEl.textContent='0';
+  captionsEl.innerHTML='<div id="empty" class="empty">Waiting for live speech…</div>';
+}
+
+function addCaption(segment){
+  if(!segment||!segment.id||seen.has(segment.id))return;
+  seen.add(segment.id);
+  const placeholder=document.getElementById('empty');
+  if(placeholder)placeholder.remove();
+  const row=document.createElement('div');
+  row.className='caption';
+  const top=document.createElement('div');
+  top.className='captiontop';
+  const time=document.createElement('span');
+  time.textContent=formatTime(segment.startMs);
+  const speaker=document.createElement('span');
+  speaker.className='speaker';
+  speaker.textContent=segment.speaker||'Live';
+  const body=document.createElement('div');
+  body.className='captiontext';
+  body.textContent=segment.text||'';
+  top.append(time,speaker);
+  row.append(top,body);
+  captionsEl.appendChild(row);
+  while(captionsEl.children.length>80)captionsEl.firstElementChild.remove();
+  captionCount+=1;
+  captionCountEl.textContent=String(captionCount);
+  captionsEl.scrollTop=captionsEl.scrollHeight;
+  if(segment.decodeMs!==undefined)captionMeta.textContent='Last Whisper decode: '+segment.decodeMs+' ms';
+}
+
+const events=new EventSource('/api/v1/transcript/${streamId}');
+events.addEventListener('open',function(){ccState.textContent='Connected';});
+events.addEventListener('error',function(){ccState.textContent='Reconnecting…';});
+events.addEventListener('reset',function(){resetCaptions();});
+events.addEventListener('transcript',function(event){
+  try{addCaption(JSON.parse(event.data));}catch{}
+});
+
 async function tick(){
   try{
-    const r=await fetch('/api/v1/status',{cache:'no-store'});
-    const j=await r.json();
-    document.getElementById('s').textContent=
-      j.stream.live
-        ? 'LIVE · '+j.stream.listeners+' listener(s)'
-        : 'OFFLINE';
-  }catch{}
+    const response=await fetch('/api/v1/status',{cache:'no-store'});
+    const data=await response.json();
+    const live=Boolean(data.stream&&data.stream.live);
+    statusEl.textContent=live?'LIVE':'OFFLINE';
+    streamState.textContent=live?'LIVE':'OFFLINE';
+    dot.classList.toggle('live',live);
+    listenerEl.textContent=String(data.stream.listeners||0);
+    codecEl.textContent=String((data.stream.codec||'mp3').toUpperCase());
+    formatEl.textContent=String(data.stream.sampleRate||44100)+' Hz · '+String(data.stream.channels||1)+' ch · '+String(data.stream.bitrateKbps||128)+' kbps';
+    if(live&&lastLive===false){
+      audio.src='/live/${streamId}?t='+Date.now();
+      audio.load();
+    }
+    lastLive=live;
+  }catch{
+    statusEl.textContent='UNAVAILABLE';
+    dot.classList.remove('live');
+  }
 }
 tick();
-setInterval(tick,2000);
+setInterval(tick,1500);
+
+function initVisualizer(){
+  if(audioContext)return;
+  try{
+    audioContext=new (window.AudioContext||window.webkitAudioContext)();
+    source=audioContext.createMediaElementSource(audio);
+    analyser=audioContext.createAnalyser();
+    analyser.fftSize=1024;
+    source.connect(analyser);
+    analyser.connect(audioContext.destination);
+    draw();
+  }catch{}
+}
+
+function draw(){
+  if(!analyser)return;
+  const canvas=document.getElementById('wave');
+  const ctx=canvas.getContext('2d');
+  const data=new Uint8Array(analyser.fftSize);
+  analyser.getByteTimeDomainData(data);
+  ctx.fillStyle='#06101a';
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.strokeStyle='#00d8e6';
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  for(let i=0;i<data.length;i++){
+    const x=i/(data.length-1)*canvas.width;
+    const y=data[i]/255*canvas.height;
+    if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+  requestAnimationFrame(draw);
+}
+audio.addEventListener('play',initVisualizer);
 </script>
-</main>
 </body>
 </html>`;
 
@@ -467,6 +746,10 @@ const server =
             listeners:
               listeners.size,
             maxListeners,
+            transcriptListeners:
+              transcriptListeners.size,
+            transcriptSegments:
+              transcriptHistory.length,
             publisherInputCodec,
             ...metadata,
           },
@@ -487,6 +770,104 @@ const server =
                 "text/html; charset=utf-8",
               "Cache-Control":
                 "no-store",
+            },
+          }
+        );
+      }
+
+      if (
+        u.pathname ===
+        `/api/v1/transcript/${streamId}/history`
+      ) {
+        return Response.json({
+          streamId,
+          segments:
+            transcriptHistory,
+        }, {
+          headers: {
+            "Cache-Control":
+              "no-store",
+          },
+        });
+      }
+
+      if (
+        u.pathname ===
+        `/api/v1/transcript/${streamId}`
+      ) {
+        if (
+          transcriptListeners.size >=
+          maxListeners
+        ) {
+          rejectedTranscriptListeners +=
+            1;
+
+          return Response.json(
+            {
+              error:
+                "transcript_listener_capacity",
+            },
+            {
+              status:
+                503,
+            }
+          );
+        }
+
+        server.timeout(
+          req,
+          0
+        );
+
+        const id =
+          crypto.randomUUID();
+
+        const rs =
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              transcriptListeners.set(
+                id,
+                { id, controller }
+              );
+
+              controller.enqueue(
+                transcriptEncoder.encode(
+                  "retry: 2000\\n\\n"
+                )
+              );
+
+              for (
+                const segment
+                of transcriptHistory
+              ) {
+                controller.enqueue(
+                  encodeTranscriptEvent(
+                    "transcript",
+                    segment
+                  )
+                );
+              }
+            },
+
+            cancel() {
+              transcriptListeners.delete(
+                id
+              );
+            },
+          });
+
+        return new Response(
+          rs,
+          {
+            headers: {
+              "Content-Type":
+                "text/event-stream; charset=utf-8",
+              "Cache-Control":
+                "no-store",
+              "Connection":
+                "keep-alive",
+              "X-Accel-Buffering":
+                "no",
             },
           }
         );
@@ -717,6 +1098,11 @@ const server =
               listeners.size,
             maxListeners,
             rejectedListeners,
+            transcriptListeners:
+              transcriptListeners.size,
+            transcriptSegments:
+              transcriptHistory.length,
+            rejectedTranscriptListeners,
           },
         });
       }
@@ -743,6 +1129,7 @@ const server =
 
         buffer.length = 0;
         bufferBytes = 0;
+        resetTranscriptHistory();
 
         event(
           "publisher_connected",
@@ -905,6 +1292,114 @@ const server =
                   codec,
                 ...metadata,
               }
+            );
+
+            return;
+          }
+
+          if (
+            body.type ===
+            "transcript"
+          ) {
+            if (
+              !ws.data.hello
+            ) {
+              ws.close(
+                1008,
+                "hello_required"
+              );
+              return;
+            }
+
+            const text =
+              String(
+                body.text ||
+                  ""
+              )
+                .trim()
+                .slice(
+                  0,
+                  1000
+                );
+
+            if (!text) {
+              return;
+            }
+
+            const sequence =
+              Math.max(
+                0,
+                Number(
+                  body.sequence
+                ) || 0
+              );
+
+            const startMs =
+              Math.max(
+                0,
+                Number(
+                  body.startMs
+                ) || 0
+              );
+
+            const endMs =
+              Math.max(
+                startMs,
+                Number(
+                  body.endMs
+                ) || startMs
+              );
+
+            const decodeMs =
+              Math.max(
+                0,
+                Number(
+                  body.decodeMs
+                ) || 0
+              );
+
+            const rawSpeaker =
+              body.speaker == null
+                ? ""
+                : String(
+                    body.speaker
+                  )
+                    .trim()
+                    .slice(
+                      0,
+                      64
+                    );
+
+            const receivedAt =
+              new Date()
+                .toISOString();
+
+            const segment:
+              TranscriptSegment = {
+              id:
+                ws.data.publisherId +
+                ":" +
+                String(
+                  sequence
+                ) +
+                ":" +
+                receivedAt,
+              sequence,
+              startMs,
+              endMs,
+              speaker:
+                rawSpeaker ||
+                null,
+              text,
+              decodeMs,
+              final:
+                body.final !==
+                false,
+              receivedAt,
+            };
+
+            pushTranscript(
+              segment
             );
 
             return;

@@ -606,7 +606,7 @@ class MainActivity : Activity() {
 
         header.addView(
             TextView(this).apply {
-                text = "ANDROID • v6.0 • ALPHA 17"
+                text = "ANDROID • v6.0 • ALPHA 18"
                 textSize = 10f
                 setTextColor(muted)
                 typeface = uiTypeface
@@ -1105,6 +1105,17 @@ class MainActivity : Activity() {
                 role = FontRole.DATA
             ).apply {
                 setPadding(0, dp(4), 0, dp(8))
+            }
+        )
+
+        broadcastCard.addView(
+            textView(
+                "Public player receives live MP3 audio plus rolling whisper.cpp captions. " +
+                    "Caption processing is isolated from the Oboe capture callback.",
+                11f,
+                muted
+            ).apply {
+                setPadding(0, 0, 0, dp(8))
             }
         )
 
@@ -2216,13 +2227,25 @@ class MainActivity : Activity() {
         val broadcastStatus =
             when (snapshot.broadcastState) {
                 BroadcastPublisher.State.LIVE ->
-                    String.format(
-                        Locale.US,
-                        "LIVE • %.2f MB sent • %d dropped",
-                        snapshot.broadcastBytesSent /
-                            (1024.0 * 1024.0),
-                        snapshot.broadcastDroppedFrames
-                    )
+                    if (
+                        snapshot.liveTranscriptionError !=
+                        null
+                    ) {
+                        "LIVE AUDIO • CC ERROR • " +
+                            snapshot.liveTranscriptionError
+                    } else {
+                        String.format(
+                            Locale.US,
+                            "LIVE • %.2f MB • audio drop %d • CC %d / drop %d • decode %d ms • skips %d",
+                            snapshot.broadcastBytesSent /
+                                (1024.0 * 1024.0),
+                            snapshot.broadcastDroppedFrames,
+                            snapshot.broadcastTranscriptSegments,
+                            snapshot.broadcastDroppedTranscripts,
+                            snapshot.liveTranscriptionDecodeMs,
+                            snapshot.liveTranscriptionSkippedWindows
+                        )
+                    }
 
                 BroadcastPublisher.State.CONNECTING ->
                     "CONNECTING"
