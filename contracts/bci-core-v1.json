@@ -1,0 +1,333 @@
+{
+  "contract": {
+    "name": "BCI Core Contract",
+    "id": "bci-core-v1",
+    "version": 1,
+    "status": "authoritative",
+    "developerSeal": "CJB-DEV-2026",
+    "description": "Authoritative cross-language runtime contract for BCIAndroid. Kotlin, C++/Oboe, and TypeScript implementations must conform to these semantics even when their language-specific representations differ."
+  },
+  "implementationDomains": {
+    "kotlin": {
+      "role": "Android orchestration",
+      "owns": [
+        "Android UI and lifecycle",
+        "runtime permissions",
+        "foreground service lifecycle",
+        "module orchestration",
+        "recording orchestration",
+        "JNI declarations",
+        "broadcast publisher client",
+        "live-transcription scheduling",
+        "robust error handling coordination"
+      ],
+      "mustNotOwn": [
+        "real-time microphone callback",
+        "Whisper native inference implementation",
+        "public gateway fanout"
+      ]
+    },
+    "cppOboe": {
+      "language": "C++17",
+      "library": "Oboe 1.11.0",
+      "role": "native real-time and inference boundary",
+      "owns": [
+        "real-time microphone stream",
+        "PCM16 native ring buffer",
+        "native audio telemetry",
+        "44.1 kHz to 16 kHz resampling",
+        "whisper.cpp context and decode",
+        "native quality assessment"
+      ],
+      "mustNotOwn": [
+        "Android UI",
+        "Android service lifecycle",
+        "network broadcast policy",
+        "browser rendering"
+      ]
+    },
+    "typescript": {
+      "runtime": "Bun 1.3.1",
+      "role": "gateway and public player transport",
+      "owns": [
+        "authenticated publisher WebSocket",
+        "PCM to MP3 gateway transcoding",
+        "listener fanout",
+        "live transcript history",
+        "Server-Sent Events captions",
+        "public browser player"
+      ],
+      "mustNotOwn": [
+        "microphone capture",
+        "Android lifecycle",
+        "on-device Whisper inference"
+      ]
+    }
+  },
+  "audio": {
+    "capture": {
+      "sampleRateHz": 44100,
+      "channels": 1,
+      "sampleFormat": "pcm_s16le",
+      "byteOrder": "little-endian",
+      "frameDefinition": "one signed 16-bit mono sample",
+      "nativeOwner": "cppOboe",
+      "androidConsumer": "kotlin",
+      "callbackRule": "The Oboe real-time callback may copy PCM into preallocated native storage and update lock-free or atomic telemetry only. It must not perform Whisper inference, filesystem I/O, network I/O, JVM calls, unbounded allocation, or blocking waits."
+    },
+    "kotlinDrain": {
+      "blockFrames": 2048,
+      "readTimeoutMs": 250,
+      "ringHistorySeconds": 15,
+      "ownership": "Kotlin drains native PCM after the Oboe callback. Native callback ownership and Kotlin drain ownership must never be reversed."
+    },
+    "whisper": {
+      "inputSampleRateHz": 16000,
+      "inputRepresentation": "float32 normalized audio",
+      "resamplingOwner": "cppOboe/native transcription engine",
+      "rule": "Every 44.1 kHz PCM16 inference path must cross the explicit native resamplePcm16To16k boundary before whisper.cpp."
+    }
+  },
+  "baseline": {
+    "requiredSeconds": 60.0,
+    "owner": "kotlin detection engine",
+    "startupStateSequence": [
+      "STOPPED",
+      "STARTING_AUDIO",
+      "AUDIO_READY",
+      "BASELINE_RESET",
+      "BASELINING",
+      "MONITORING"
+    ],
+    "progress": {
+      "unit": "seconds",
+      "mustBeMonotonic": true,
+      "completionValueSeconds": 60.0
+    },
+    "failureRules": {
+      "pcmNoProgressMs": 1500,
+      "baselineNoProgressWhilePcmArrivesMs": 3000,
+      "behavior": "A fatal baseline/audio stall must stop the affected monitoring path safely, preserve the root error code/message, and leave the Android process alive for diagnosis."
+    }
+  },
+  "jni": {
+    "library": "bciwhisper_whisper",
+    "abi": "arm64-v8a",
+    "stl": "c++_shared",
+    "cppStandard": 17,
+    "methodContract": "Every Kotlin external method must have exactly one matching JNI export with the same semantic parameter order and JNI-compatible return/parameter types.",
+    "kotlinToJniTypes": {
+      "Unit": "void",
+      "Boolean": "jboolean",
+      "Int": "jint",
+      "Long": "jlong",
+      "String": "jstring",
+      "ShortArray": "jshortArray",
+      "FloatArray": "jfloatArray",
+      "DoubleArray": "jdoubleArray"
+    }
+  },
+  "graphics": {
+    "api": "OpenGL ES",
+    "majorVersion": 2,
+    "androidManifestVersion": "0x00020000",
+    "kotlinSurface": "GLSurfaceView",
+    "kotlinApi": "GLES20",
+    "threadingRule": "Rendering runs on the GLSurfaceView render thread. The audio callback must never wait for the render thread.",
+    "lifecycleRule": "The GL surface pauses when the Activity is paused and must not retain active rendering work after the monitor surface is detached."
+  },
+  "broadcast": {
+    "protocol": "bci-broadcast-v1",
+    "streamId": "bciandroid-main",
+    "publisherId": "bciwhisper-android",
+    "publisherTransport": "authenticated WebSocket",
+    "inputCodec": "pcm_s16le",
+    "inputSampleRateHz": 44100,
+    "inputChannels": 1,
+    "publicCodec": "mp3",
+    "publicBitrateKbps": 128,
+    "helloRequired": true,
+    "helloAckValidation": {
+      "requiredFields": [
+        "type",
+        "protocol",
+        "streamId",
+        "inputCodec",
+        "outputCodec"
+      ],
+      "rule": "Android may enter LIVE only after structurally parsing hello_ack and verifying protocol, streamId, inputCodec, and outputCodec against this contract."
+    }
+  },
+  "transcript": {
+    "transportFromAndroid": "authenticated publisher WebSocket JSON message",
+    "transportToBrowser": "Server-Sent Events",
+    "eventName": "transcript",
+    "historyEndpoint": "/api/v1/transcript/bciandroid-main/history",
+    "liveEndpoint": "/api/v1/transcript/bciandroid-main",
+    "fields": {
+      "sequence": {
+        "type": "integer",
+        "unit": "monotonic segment number"
+      },
+      "startMs": {
+        "type": "integer",
+        "unit": "milliseconds from livestream start"
+      },
+      "endMs": {
+        "type": "integer",
+        "unit": "milliseconds from livestream start"
+      },
+      "speaker": {
+        "type": "string|null",
+        "semantics": "neutral best-effort label such as Speaker 1"
+      },
+      "text": {
+        "type": "string",
+        "maxChars": 1000
+      },
+      "decodeMs": {
+        "type": "integer",
+        "unit": "milliseconds"
+      },
+      "final": {
+        "type": "boolean"
+      }
+    },
+    "priorityRule": "Transcript delivery is lower priority than live PCM. Under WebSocket backpressure, transcript messages are dropped before audio."
+  },
+  "robustErrorHandling": {
+    "owner": "kotlin",
+    "handler": "RobustErrorHandler",
+    "checkIntervalMs": 250,
+    "principles": [
+      "Never allow the error handler itself to crash the process.",
+      "Never perform robust error checks in the Oboe real-time callback.",
+      "Preserve the first ERROR/FATAL fault as root cause for the monitoring session.",
+      "Preserve the most recent distinct fault separately from root cause.",
+      "Coalesce repeated identical faults and increment an occurrence counter instead of flooding logs/UI.",
+      "Warnings may degrade health but must not stop healthy audio.",
+      "Non-fatal transcription or broadcast failures must not stop local microphone capture.",
+      "Fatal native-audio, sample-rate, capture-stall, baseline-stall, or capture-loop failures must stop the affected monitoring path safely.",
+      "A fatal worker exception must be caught at the worker boundary rather than escaping and terminating the Android process.",
+      "Recovery actions must be idempotent."
+    ],
+    "severity": {
+      "INFO": "Informational observation; no degradation.",
+      "WARNING": "Recoverable degradation; continue primary runtime path.",
+      "ERROR": "Subsystem failure that may disable that subsystem but does not necessarily stop primary audio.",
+      "FATAL": "Invariant violation or primary audio failure requiring safe shutdown of monitoring."
+    },
+    "status": {
+      "HEALTHY": "Current check contains no warning/error/fatal observations.",
+      "DEGRADED": "Current check contains WARNING or non-fatal ERROR observations.",
+      "ERROR": "Current check contains a FATAL observation."
+    },
+    "errorCodes": {
+      "BCI_E_MONITOR_START": {
+        "severity": "FATAL",
+        "module": "android.audio.startup",
+        "meaning": "Monitoring failed during route/native startup.",
+        "recovery": "Stop native capture if opened, stop foreground microphone state, preserve diagnostics, permit explicit operator retry."
+      },
+      "BCI_E_CAPTURE_LOOP": {
+        "severity": "FATAL",
+        "module": "android.audio.capture",
+        "meaning": "Unhandled exception crossed the capture-worker operation boundary.",
+        "recovery": "Catch exception, preserve root cause, stop monitoring safely; never allow exception to terminate process."
+      },
+      "BCI_E_AUDIO_INACTIVE": {
+        "severity": "FATAL",
+        "module": "native.audio",
+        "meaning": "Android believes monitoring is running but Oboe reports no active stream.",
+        "recovery": "Stop affected monitoring session and permit operator restart."
+      },
+      "BCI_E_NATIVE_PROBE": {
+        "severity": "FATAL",
+        "module": "native.audio",
+        "meaning": "JNI/native health probe itself failed.",
+        "recovery": "Treat native boundary as unreliable and stop monitoring."
+      },
+      "BCI_E_SAMPLE_RATE": {
+        "severity": "FATAL",
+        "module": "native.audio",
+        "meaning": "Native stream sample rate differs from the 44.1 kHz contract.",
+        "recovery": "Stop monitoring; do not feed mismatched-rate PCM into detector/publisher."
+      },
+      "BCI_E_CAPTURE_STALL": {
+        "severity": "FATAL",
+        "module": "android.audio.capture",
+        "meaning": "Frames captured did not advance for the configured stall window.",
+        "recovery": "Stop monitoring safely rather than leaving a frozen baseline/UI."
+      },
+      "BCI_E_BASELINE_STALL": {
+        "severity": "FATAL",
+        "module": "kotlin.detection",
+        "meaning": "PCM is arriving but baseline progress is not advancing.",
+        "recovery": "Stop monitoring safely and preserve fault for diagnosis."
+      },
+      "BCI_E_LIVE_TRANSCRIPTION": {
+        "severity": "ERROR",
+        "module": "kotlin.transcription",
+        "meaning": "Live caption worker failed.",
+        "recovery": "Keep local audio capture and live audio operational; expose caption failure."
+      },
+      "BCI_E_BROADCAST": {
+        "severity": "ERROR",
+        "module": "kotlin.broadcast",
+        "meaning": "Broadcast publisher entered ERROR state.",
+        "recovery": "Keep local monitoring operational; permit reconnect/retry."
+      },
+      "BCI_E_ERROR_HANDLER": {
+        "severity": "ERROR",
+        "module": "android.robust_error_handler",
+        "meaning": "Robust error handler encountered an internal exception.",
+        "recovery": "Catch internally, record diagnostic, never propagate into app process."
+      },
+      "BCI_W_AUDIO_XRUN": {
+        "severity": "WARNING",
+        "module": "native.audio",
+        "meaning": "Oboe xRun count increased.",
+        "recovery": "Continue capture; expose performance degradation."
+      },
+      "BCI_W_NATIVE_RING_DROP": {
+        "severity": "WARNING",
+        "module": "native.audio",
+        "meaning": "Native PCM ring could not retain one or more incoming frames.",
+        "recovery": "Continue capture; record drop count."
+      },
+      "BCI_W_BROADCAST_AUDIO_DROP": {
+        "severity": "WARNING",
+        "module": "kotlin.broadcast",
+        "meaning": "Publisher dropped audio because the network WebSocket queue exceeded the configured limit.",
+        "recovery": "Continue local monitoring and allow network recovery."
+      },
+      "BCI_W_BROADCAST_TRANSCRIPT_DROP": {
+        "severity": "WARNING",
+        "module": "kotlin.broadcast",
+        "meaning": "Lower-priority live transcript message was dropped under backpressure.",
+        "recovery": "Continue audio; transcript is intentionally lower priority."
+      }
+    }
+  },
+  "timeAndUnits": {
+    "externalTimeUnit": "milliseconds",
+    "whisperNativeSegmentUnit": "10 milliseconds",
+    "baselineUnit": "seconds",
+    "audioLevelUnit": "dBFS",
+    "frequencyUnit": "Hz",
+    "rule": "Every boundary must name or encode its unit. Silent conversion between frames, milliseconds, 10 ms Whisper ticks, seconds, Hz, or dBFS is prohibited."
+  },
+  "compatibility": {
+    "backwardCompatibilityRule": "A change to a field meaning, unit, required protocol field, sample representation, JNI signature, state semantics, or error-code semantics requires either a backward-compatible adapter or a new BCI Core Contract version.",
+    "ciRequirements": [
+      "Verify Kotlin external declarations against packaged JNI exports.",
+      "Verify required native shared libraries exist in the final APK.",
+      "Verify ELF NEEDED dependencies resolve to packaged Android libraries.",
+      "Verify audio format/sample-rate/channel agreement.",
+      "Verify OpenGL ES manifest/context/API agreement.",
+      "Verify publisher/gateway protocol IDs and message fields.",
+      "Verify gateway CI Bun runtime matches Docker Bun runtime.",
+      "Verify robust error handler source and capture-loop exception boundary remain present."
+    ]
+  }
+}
