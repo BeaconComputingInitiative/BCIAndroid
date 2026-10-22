@@ -2,7 +2,7 @@
 
 BCIAndroid is the dedicated native Android repository for BCIWhisper. Android source, CI, signing, APK artifacts, and Android releases live here independently from the desktop BCIWhisper repository.
 
-## Current mobile baseline — Alpha 11
+## Current mobile baseline — Alpha 16
 
 Workspaces:
 
@@ -241,3 +241,19 @@ BCIAndroid now explicitly prioritizes continuous operation over offline compute:
 - The tiny.en model remains the default to constrain memory and thermals on mobile hardware.
 
 The scheduler is deliberately capture-first: transcription may take longer while BCIWhisper is actively monitoring or broadcasting, but the real-time microphone path keeps CPU headroom.
+
+
+## Alpha 16 — responsive GUI scheduling
+
+The Android interface now uses a dedicated responsiveness budget instead of slowing the entire UI during transcription:
+
+- Monitor telemetry refreshes every **100 ms** even while transcription or mastering is active.
+- Network capability queries are cached and refreshed once per second instead of being repeated on every UI tick.
+- Repeated TextView, button-state, and progress updates are skipped when the displayed value has not changed.
+- The monitor reuses the already-fetched audio snapshot when updating microphone source controls rather than requesting another snapshot.
+- The 3D spectrum no longer suspends during transcription. It renders at **30 FPS normally** and **20 FPS during heavy compute**, keeping motion live while protecting capture/transcription headroom.
+- Spectrum shaders and waterfall paths are cached instead of allocated every frame.
+- The expensive software blur rendering path has been removed so Android can use the normal hardware-accelerated view pipeline.
+- Waterfall history depth is reduced from 28 to 20 layers and advances at 18 Hz, lowering per-frame draw work while retaining spatial history.
+
+The real-time audio boundary remains independent of the GUI scheduler; these changes reduce main-thread work without moving DSP, capture, or transcription onto the UI thread.

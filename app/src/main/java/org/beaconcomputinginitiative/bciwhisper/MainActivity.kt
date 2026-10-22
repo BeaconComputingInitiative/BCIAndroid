@@ -84,6 +84,10 @@ class MainActivity : Activity() {
     private var bound = false
     private val handler = Handler(Looper.getMainLooper())
 
+    private var lastNetworkRefreshMs = 0L
+    private var cachedNetworkSummary = "NETWORK • OFFLINE"
+    private var cachedNetworkAvailable = false
+
     private lateinit var content: FrameLayout
     private lateinit var monitorTab: Button
     private lateinit var recordingsTab: Button
@@ -150,14 +154,9 @@ class MainActivity : Activity() {
     private val poll = object : Runnable {
         override fun run() {
             renderSnapshot()
-
             handler.postDelayed(
                 this,
-                if (transcriptionBusy) {
-                    1_250L
-                } else {
-                    250L
-                }
+                UI_POLL_MS
             )
         }
     }
@@ -309,16 +308,30 @@ class MainActivity : Activity() {
         renderInputSourceControls()
     }
 
-    private fun renderInputSourceControls() {
+    private fun renderInputSourceControls(
+        runningOverride: Boolean? = null
+    ) {
         val selected = selectedInputSource()
-        val running = audioService?.snapshot()?.running == true
+        val running =
+            runningOverride
+                ?: (audioService?.snapshot()?.running == true)
 
-        phoneSourceButton?.isEnabled =
-            !running && selected != AudioMonitorService.INPUT_SOURCE_PHONE
-        bluetoothSourceButton?.isEnabled =
-            !running && selected != AudioMonitorService.INPUT_SOURCE_BLUETOOTH
+        updateEnabled(
+            phoneSourceButton,
+            !running &&
+                selected !=
+                AudioMonitorService.INPUT_SOURCE_PHONE
+        )
 
-        sourceStatusText?.text =
+        updateEnabled(
+            bluetoothSourceButton,
+            !running &&
+                selected !=
+                AudioMonitorService.INPUT_SOURCE_BLUETOOTH
+        )
+
+        updateText(
+            sourceStatusText,
             when (selected) {
                 AudioMonitorService.INPUT_SOURCE_BLUETOOTH ->
                     if (hasBluetoothPermission()) {
@@ -326,8 +339,11 @@ class MainActivity : Activity() {
                     } else {
                         "BLUETOOTH selected • Nearby devices permission required"
                     }
-                else -> "PHONE MICROPHONE selected"
+
+                else ->
+                    "PHONE MICROPHONE selected"
             }
+        )
     }
 
     private fun hasMicrophonePermission(): Boolean =
@@ -574,7 +590,7 @@ class MainActivity : Activity() {
 
         header.addView(
             TextView(this).apply {
-                text = "ANDROID • v6.0 • ALPHA 15"
+                text = "ANDROID • v6.0 • ALPHA 16"
                 textSize = 10f
                 setTextColor(muted)
                 typeface = uiTypeface
@@ -1915,14 +1931,16 @@ class MainActivity : Activity() {
     private fun renderSnapshot() {
         if (currentScreen != Screen.MONITOR) return
 
-        networkText?.text = networkSummary()
+        refreshNetworkCacheIfNeeded()
 
         val hasPermission =
             hasMicrophonePermission()
+
         val snapshot =
             audioService?.snapshot()
 
-        permissionText?.text =
+        updateText(
+            permissionText,
             if (hasPermission) {
                 "Microphone permission enabled • capture occurs " +
                     "only while monitoring is active."
@@ -1931,83 +1949,119 @@ class MainActivity : Activity() {
                     "not prompt again automatically; use Start " +
                     "Monitor to open App permissions."
             }
+        )
 
         if (snapshot == null) {
-            stateText?.text = when {
-                !hasPermission ->
-                    "MICROPHONE PERMISSION REQUIRED"
+            updateText(
+                stateText,
+                when {
+                    !hasPermission ->
+                        "MICROPHONE PERMISSION REQUIRED"
 
-                bound ->
-                    "Microphone boundary ready"
+                    bound ->
+                        "Microphone boundary ready"
 
-                else ->
-                    "Boundary stopped"
-            }
+                    else ->
+                        "Boundary stopped"
+                }
+            )
 
-            startButton?.text =
+            updateText(
+                startButton,
                 if (hasPermission) {
                     "START MONITOR"
                 } else {
                     "OPEN PERMISSIONS"
                 }
+            )
 
-            startButton?.isEnabled = true
-            stopButton?.isEnabled = false
+            updateEnabled(
+                startButton,
+                true
+            )
 
-            broadcastStatusText?.text = "OFFLINE"
-            goLiveButton?.isEnabled =
+            updateEnabled(
+                stopButton,
+                false
+            )
+
+            updateText(
+                broadcastStatusText,
+                "OFFLINE"
+            )
+
+            updateEnabled(
+                goLiveButton,
                 hasPermission &&
-                    isNetworkAvailable() &&
+                    cachedNetworkAvailable &&
                     hasPublisherCredentialForLive()
-            stopLiveButton?.isEnabled = false
+            )
+
+            updateEnabled(
+                stopLiveButton,
+                false
+            )
+
+            spectrumView?.setComputeBusy(
+                transcriptionBusy ||
+                    masteringBusy
+            )
+
             return
         }
 
-        stateText?.text = when {
-            snapshot.lastError != null ->
-                "ERROR • ${snapshot.lastError}"
+        updateText(
+            stateText,
+            when {
+                snapshot.lastError != null ->
+                    "ERROR • ${snapshot.lastError}"
 
-            !hasPermission ->
-                "MICROPHONE PERMISSION REQUIRED"
+                !hasPermission ->
+                    "MICROPHONE PERMISSION REQUIRED"
 
-            snapshot.recordingActive ->
-                "SIGNAL LOCKED • RECORDING"
+                snapshot.recordingActive ->
+                    "SIGNAL LOCKED • RECORDING"
 
-            snapshot.running &&
-                !snapshot.baselineComplete ->
-                "CALIBRATING • ${snapshot.sampleRate} Hz"
+                snapshot.running &&
+                    !snapshot.baselineComplete ->
+                    "CALIBRATING • ${snapshot.sampleRate} Hz"
 
-            snapshot.running ->
-                "MONITORING • " + snapshot.inputDevice + " • " + snapshot.sampleRate + " Hz"
+                snapshot.running ->
+                    "MONITORING • " +
+                        snapshot.inputDevice +
+                        " • " +
+                        snapshot.sampleRate +
+                        " Hz"
 
-            else ->
-                "Boundary stopped"
-        }
-
-        levelText?.text = String.format(
-            Locale.US,
-            "RMS %.1f dBFS   •   PEAK %.1f dBFS",
-            snapshot.rmsDbfs,
-            snapshot.peakDbfs
+                else ->
+                    "Boundary stopped"
+            }
         )
 
-        if (transcriptionBusy) {
-            spectrumView?.setSuspended(
-                true
+        updateText(
+            levelText,
+            String.format(
+                Locale.US,
+                "RMS %.1f dBFS   •   PEAK %.1f dBFS",
+                snapshot.rmsDbfs,
+                snapshot.peakDbfs
             )
-        } else {
-            spectrumView?.setSuspended(
-                false
-            )
-            spectrumView?.submit(
-                snapshot.spectrumBands,
-                snapshot.lockLowHz,
-                snapshot.lockHighHz,
-                snapshot.sampleRate
-            )
-        }
+        )
 
-        detectionText?.text =
+        spectrumView?.setComputeBusy(
+            transcriptionBusy ||
+                masteringBusy
+        )
+
+        spectrumView?.submit(
+            snapshot.spectrumBands,
+            snapshot.lockLowHz,
+            snapshot.lockHighHz,
+            snapshot.sampleRate
+        )
+
+        updateText(
+            detectionText,
             when {
                 !snapshot.baselineComplete ->
                     String.format(
@@ -2048,16 +2102,30 @@ class MainActivity : Activity() {
                         snapshot.noiseFloorDbfs
                     )
             }
+        )
 
         val peakForMeter =
-            snapshot.peakDbfs.coerceIn(-60.0, 0.0)
+            snapshot.peakDbfs
+                .coerceIn(
+                    -60.0,
+                    0.0
+                )
 
-        levelBar?.progress =
-            ((peakForMeter + 60.0) * 10.0)
+        updateProgress(
+            levelBar,
+            (
+                (peakForMeter + 60.0) *
+                    10.0
+                )
                 .toInt()
-                .coerceIn(0, 600)
+                .coerceIn(
+                    0,
+                    600
+                )
+        )
 
-        baselineText?.text =
+        updateText(
+            baselineText,
             if (snapshot.baselineComplete) {
                 String.format(
                     Locale.US,
@@ -2072,29 +2140,52 @@ class MainActivity : Activity() {
                     snapshot.noiseFloorDbfs
                 )
             }
+        )
 
-        baselineBar?.progress =
-            (snapshot.baselineSeconds * 10.0)
+        updateProgress(
+            baselineBar,
+            (
+                snapshot.baselineSeconds *
+                    10.0
+                )
                 .toInt()
-                .coerceIn(0, 600)
+                .coerceIn(
+                    0,
+                    600
+                )
+        )
 
-        startButton?.text =
+        updateText(
+            startButton,
             if (hasPermission) {
                 "START MONITOR"
             } else {
                 "OPEN PERMISSIONS"
             }
+        )
 
-        startButton?.isEnabled = !snapshot.running
-        stopButton?.isEnabled = snapshot.running
+        updateEnabled(
+            startButton,
+            !snapshot.running
+        )
 
-        renderInputSourceControls()
+        updateEnabled(
+            stopButton,
+            snapshot.running
+        )
+
+        renderInputSourceControls(
+            snapshot.running
+        )
+
         if (snapshot.running) {
-            sourceStatusText?.text =
+            updateText(
+                sourceStatusText,
                 "ACTIVE • " +
                     snapshot.inputDevice +
                     "\n" +
                     snapshot.inputCapabilities
+            )
         }
 
         val broadcastStatus =
@@ -2129,8 +2220,10 @@ class MainActivity : Activity() {
                     "OFFLINE"
             }
 
-        broadcastStatusText?.text =
+        updateText(
+            broadcastStatusText,
             broadcastStatus
+        )
 
         val liveOrConnecting =
             snapshot.broadcastState !=
@@ -2138,14 +2231,79 @@ class MainActivity : Activity() {
                 snapshot.broadcastState !=
                 BroadcastPublisher.State.ERROR
 
-        goLiveButton?.isEnabled =
+        updateEnabled(
+            goLiveButton,
             hasPermission &&
-                isNetworkAvailable() &&
+                cachedNetworkAvailable &&
                 hasPublisherCredentialForLive() &&
                 !liveOrConnecting
+        )
 
-        stopLiveButton?.isEnabled =
+        updateEnabled(
+            stopLiveButton,
             liveOrConnecting
+        )
+    }
+
+    private fun refreshNetworkCacheIfNeeded(
+        force: Boolean = false
+    ) {
+        val now =
+            SystemClock.uptimeMillis()
+
+        if (
+            force ||
+            now - lastNetworkRefreshMs >=
+                NETWORK_REFRESH_MS
+        ) {
+            lastNetworkRefreshMs = now
+            cachedNetworkAvailable =
+                isNetworkAvailable()
+            cachedNetworkSummary =
+                networkSummary()
+        }
+
+        updateText(
+            networkText,
+            cachedNetworkSummary
+        )
+    }
+
+    private fun updateText(
+        view: TextView?,
+        value: CharSequence
+    ) {
+        if (
+            view != null &&
+            view.text.toString() !=
+                value.toString()
+        ) {
+            view.text = value
+        }
+    }
+
+    private fun updateEnabled(
+        view: android.view.View?,
+        enabled: Boolean
+    ) {
+        if (
+            view != null &&
+            view.isEnabled != enabled
+        ) {
+            view.isEnabled = enabled
+        }
+    }
+
+    private fun updateProgress(
+        bar: ProgressBar?,
+        value: Int
+    ) {
+        if (
+            bar != null &&
+            bar.progress != value
+        ) {
+            bar.progress = value
+        }
     }
 
     private fun isNetworkAvailable(): Boolean {
@@ -2235,6 +2393,8 @@ class MainActivity : Activity() {
         ).toInt()
 
     companion object {
+        private const val UI_POLL_MS = 100L
+        private const val NETWORK_REFRESH_MS = 1_000L
         private const val REQUEST_MICROPHONE = 100
         private const val REQUEST_BLUETOOTH_CONNECT = 101
         private const val PREFS_NAME =
