@@ -11,7 +11,7 @@ import { timingSafeEqual } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
-const VERSION = "1.0.0";
+const VERSION = "1.1.0";
 const PROTOCOL = "bci-broadcast-v1";
 const SERVICE = "BCIAndroid Live Gateway";
 
@@ -136,6 +136,24 @@ type Listener = {
     ReadableStreamDefaultController<Uint8Array>;
 };
 
+type TranscriptSegment = {
+  id: string;
+  sequence: number;
+  startMs: number;
+  endMs: number;
+  speaker: string | null;
+  text: string;
+  decodeMs: number;
+  final: boolean;
+  receivedAt: string;
+};
+
+type TranscriptListener = {
+  id: string;
+  controller:
+    ReadableStreamDefaultController<Uint8Array>;
+};
+
 const started = Date.now();
 
 let publisher:
@@ -162,6 +180,29 @@ let metadata = {
 
 const listeners =
   new Map<string, Listener>();
+
+const transcriptListeners =
+  new Map<string, TranscriptListener>();
+
+const transcriptHistory:
+  TranscriptSegment[] =
+  [];
+
+const transcriptEncoder =
+  new TextEncoder();
+
+const transcriptHistoryLimit =
+  Math.min(
+    500,
+    Math.max(
+      20,
+      Number.parseInt(
+        Bun.env.BCI_TRANSCRIPT_HISTORY_LIMIT ||
+          "120",
+        10
+      ) || 120
+    )
+  );
 
 const buffer:
   Uint8Array[] =
@@ -227,6 +268,77 @@ function closeListeners() {
   }
 
   listeners.clear();
+}
+
+function encodeTranscriptEvent(
+  name: string,
+  payload: unknown
+) {
+  return transcriptEncoder.encode(
+    "event: " +
+      name +
+      "\ndata: " +
+      JSON.stringify(payload) +
+      "\n\n"
+  );
+}
+
+function fanoutTranscriptEvent(
+  name: string,
+  payload: unknown
+) {
+  const encoded =
+    encodeTranscriptEvent(
+      name,
+      payload
+    );
+
+  for (
+    const [id, listener]
+    of transcriptListeners
+  ) {
+    try {
+      listener.controller.enqueue(
+        encoded
+      );
+    } catch {
+      transcriptListeners.delete(
+        id
+      );
+    }
+  }
+}
+
+function pushTranscript(
+  segment: TranscriptSegment
+) {
+  transcriptHistory.push(
+    segment
+  );
+
+  while (
+    transcriptHistory.length >
+    transcriptHistoryLimit
+  ) {
+    transcriptHistory.shift();
+  }
+
+  fanoutTranscriptEvent(
+    "transcript",
+    segment
+  );
+}
+
+function resetTranscriptHistory() {
+  transcriptHistory.length =
+    0;
+
+  fanoutTranscriptEvent(
+    "reset",
+    {
+      streamId,
+    }
+  );
 }
 
 function stopTranscoder() {
