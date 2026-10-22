@@ -107,7 +107,8 @@
     "failureRules": {
       "pcmNoProgressMs": 1500,
       "baselineNoProgressWhilePcmArrivesMs": 3000,
-      "behavior": "A fatal baseline/audio stall must stop the affected monitoring path safely, preserve the root error code/message, and leave the Android process alive for diagnosis."
+      "behavior": "A fatal baseline/audio stall must stop the affected monitoring path safely, preserve the root error code/message, and leave the Android process alive for diagnosis.",
+      "firstPcmFrameTimeoutMs": 4000
     },
     "resourcePriority": {
       "rule": "Baseline and native capture startup have priority over offline Whisper warm-up.",
