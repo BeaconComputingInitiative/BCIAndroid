@@ -62,6 +62,8 @@ public:
             builder.openStream(mStream);
 
         if (result != oboe::Result::OK) {
+            mStream.reset();
+
             builder.setSharingMode(
                 oboe::SharingMode::Shared);
 
@@ -267,20 +269,11 @@ public:
                 kRingCapacityFrames;
 
             if (nextWrite == readIndex) {
-                readIndex =
-                    (
-                        readIndex +
-                        1
-                    ) %
-                    kRingCapacityFrames;
-
-                mReadIndex.store(
-                    readIndex,
-                    std::memory_order_release);
-
                 mDroppedFrames.fetch_add(
                     1,
                     std::memory_order_relaxed);
+
+                continue;
             }
 
             mRing[
