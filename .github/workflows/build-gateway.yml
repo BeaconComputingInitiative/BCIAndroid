@@ -1,5 +1,9 @@
 name: Build Android Gateway
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   workflow_dispatch:
   push:
@@ -31,11 +35,6 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.1"
-
-      - name: Install ffmpeg
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
 
       - name: Cross-module compatibility contracts
         run: python3 scripts/verify-module-contracts.py
