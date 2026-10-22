@@ -1323,6 +1323,33 @@ class AudioMonitorService : Service() {
                 healthLastFrameProgressMs =
                     now
             } else if (
+                currentFrames ==
+                    0L &&
+                now -
+                    healthLastFrameProgressMs >=
+                FIRST_PCM_FRAME_TIMEOUT_MS
+            ) {
+                observations.add(
+                    RobustErrorHandler
+                        .Observation(
+                            code =
+                                BCI_E_CAPTURE_STALL,
+                            module =
+                                "android.audio.capture",
+                            severity =
+                                RobustErrorHandler
+                                    .Severity.FATAL,
+                            message =
+                                "No first PCM frame arrived within " +
+                                    FIRST_PCM_FRAME_TIMEOUT_MS +
+                                    " ms",
+                            fatal =
+                                true
+                        )
+                )
+            } else if (
+                currentFrames >
+                    0L &&
                 now -
                     healthLastFrameProgressMs >=
                 CAPTURE_STALL_MS
@@ -1338,7 +1365,7 @@ class AudioMonitorService : Service() {
                                 RobustErrorHandler
                                     .Severity.FATAL,
                             message =
-                                "No PCM frame progress for " +
+                                "PCM frame progress stopped for " +
                                     (
                                         now -
                                             healthLastFrameProgressMs
@@ -1846,6 +1873,9 @@ class AudioMonitorService : Service() {
 
         private const val ROBUST_ERROR_CHECK_MS =
             250L
+
+        private const val FIRST_PCM_FRAME_TIMEOUT_MS =
+            4_000L
 
         private const val CAPTURE_STALL_MS =
             1_500L
