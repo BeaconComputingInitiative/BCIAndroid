@@ -165,6 +165,7 @@ let bytesReceived = 0;
 let chunksReceived = 0;
 let rejectedPublishers = 0;
 let rejectedListeners = 0;
+let rejectedTranscriptListeners = 0;
 
 let publisherInputCodec:
   PublisherCodec | null =
@@ -340,6 +341,23 @@ function resetTranscriptHistory() {
     }
   );
 }
+
+const transcriptHeartbeat =
+  setInterval(
+    () => {
+      fanoutTranscriptEvent(
+        "heartbeat",
+        {
+          ts:
+            new Date()
+              .toISOString(),
+        }
+      );
+    },
+    15_000
+  );
+
+transcriptHeartbeat.unref?.();
 
 function stopTranscoder() {
   const proc = transcoder;
@@ -777,6 +795,25 @@ const server =
         u.pathname ===
         `/api/v1/transcript/${streamId}`
       ) {
+        if (
+          transcriptListeners.size >=
+          maxListeners
+        ) {
+          rejectedTranscriptListeners +=
+            1;
+
+          return Response.json(
+            {
+              error:
+                "transcript_listener_capacity",
+            },
+            {
+              status:
+                503,
+            }
+          );
+        }
+
         server.timeout(
           req,
           0
@@ -1065,6 +1102,7 @@ const server =
               transcriptListeners.size,
             transcriptSegments:
               transcriptHistory.length,
+            rejectedTranscriptListeners,
           },
         });
       }
