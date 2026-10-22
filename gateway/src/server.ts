@@ -579,6 +579,10 @@ const server =
             listeners:
               listeners.size,
             maxListeners,
+            transcriptListeners:
+              transcriptListeners.size,
+            transcriptSegments:
+              transcriptHistory.length,
             publisherInputCodec,
             ...metadata,
           },
@@ -599,6 +603,85 @@ const server =
                 "text/html; charset=utf-8",
               "Cache-Control":
                 "no-store",
+            },
+          }
+        );
+      }
+
+      if (
+        u.pathname ===
+        `/api/v1/transcript/${streamId}/history`
+      ) {
+        return Response.json({
+          streamId,
+          segments:
+            transcriptHistory,
+        }, {
+          headers: {
+            "Cache-Control":
+              "no-store",
+          },
+        });
+      }
+
+      if (
+        u.pathname ===
+        `/api/v1/transcript/${streamId}`
+      ) {
+        server.timeout(
+          req,
+          0
+        );
+
+        const id =
+          crypto.randomUUID();
+
+        const rs =
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              transcriptListeners.set(
+                id,
+                { id, controller }
+              );
+
+              controller.enqueue(
+                transcriptEncoder.encode(
+                  "retry: 2000\\n\\n"
+                )
+              );
+
+              for (
+                const segment
+                of transcriptHistory
+              ) {
+                controller.enqueue(
+                  encodeTranscriptEvent(
+                    "transcript",
+                    segment
+                  )
+                );
+              }
+            },
+
+            cancel() {
+              transcriptListeners.delete(
+                id
+              );
+            },
+          });
+
+        return new Response(
+          rs,
+          {
+            headers: {
+              "Content-Type":
+                "text/event-stream; charset=utf-8",
+              "Cache-Control":
+                "no-store",
+              "Connection":
+                "keep-alive",
+              "X-Accel-Buffering":
+                "no",
             },
           }
         );
@@ -829,6 +912,10 @@ const server =
               listeners.size,
             maxListeners,
             rejectedListeners,
+            transcriptListeners:
+              transcriptListeners.size,
+            transcriptSegments:
+              transcriptHistory.length,
           },
         });
       }
@@ -855,6 +942,7 @@ const server =
 
         buffer.length = 0;
         bufferBytes = 0;
+        resetTranscriptHistory();
 
         event(
           "publisher_connected",
@@ -1017,6 +1105,114 @@ const server =
                   codec,
                 ...metadata,
               }
+            );
+
+            return;
+          }
+
+          if (
+            body.type ===
+            "transcript"
+          ) {
+            if (
+              !ws.data.hello
+            ) {
+              ws.close(
+                1008,
+                "hello_required"
+              );
+              return;
+            }
+
+            const text =
+              String(
+                body.text ||
+                  ""
+              )
+                .trim()
+                .slice(
+                  0,
+                  1000
+                );
+
+            if (!text) {
+              return;
+            }
+
+            const sequence =
+              Math.max(
+                0,
+                Number(
+                  body.sequence
+                ) || 0
+              );
+
+            const startMs =
+              Math.max(
+                0,
+                Number(
+                  body.startMs
+                ) || 0
+              );
+
+            const endMs =
+              Math.max(
+                startMs,
+                Number(
+                  body.endMs
+                ) || startMs
+              );
+
+            const decodeMs =
+              Math.max(
+                0,
+                Number(
+                  body.decodeMs
+                ) || 0
+              );
+
+            const rawSpeaker =
+              body.speaker == null
+                ? ""
+                : String(
+                    body.speaker
+                  )
+                    .trim()
+                    .slice(
+                      0,
+                      64
+                    );
+
+            const receivedAt =
+              new Date()
+                .toISOString();
+
+            const segment:
+              TranscriptSegment = {
+              id:
+                ws.data.publisherId +
+                ":" +
+                String(
+                  sequence
+                ) +
+                ":" +
+                receivedAt,
+              sequence,
+              startMs,
+              endMs,
+              speaker:
+                rawSpeaker ||
+                null,
+              text,
+              decodeMs,
+              final:
+                body.final !==
+                false,
+              receivedAt,
+            };
+
+            pushTranscript(
+              segment
             );
 
             return;
