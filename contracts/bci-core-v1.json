@@ -89,7 +89,7 @@
     }
   },
   "baseline": {
-    "requiredSeconds": 60.0,
+    "requiredSeconds": 60,
     "owner": "kotlin detection engine",
     "startupStateSequence": [
       "STOPPED",
@@ -102,12 +102,17 @@
     "progress": {
       "unit": "seconds",
       "mustBeMonotonic": true,
-      "completionValueSeconds": 60.0
+      "completionValueSeconds": 60
     },
     "failureRules": {
       "pcmNoProgressMs": 1500,
       "baselineNoProgressWhilePcmArrivesMs": 3000,
       "behavior": "A fatal baseline/audio stall must stop the affected monitoring path safely, preserve the root error code/message, and leave the Android process alive for diagnosis."
+    },
+    "resourcePriority": {
+      "rule": "Baseline and native capture startup have priority over offline Whisper warm-up.",
+      "offlineWhisperWarmup": "must not start automatically from Activity onCreate; warm-up is lazy and begins when the transcription workflow is opened.",
+      "liveWhisperWarmup": "may begin only when Go Live starts the dedicated live-transcription worker; it must remain off the Oboe callback."
     }
   },
   "jni": {
