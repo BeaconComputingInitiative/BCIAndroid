@@ -7,6 +7,7 @@ Developer Seal: CJB-DEV-2026
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -189,6 +190,19 @@ spectrum = read(
 gateway = read("gateway/src/server.ts")
 gateway_package = read("gateway/package.json")
 gateway_docker = read("gateway/Dockerfile")
+robust_handler = read(
+    "app/src/main/java/org/beaconcomputinginitiative/bciwhisper/runtime/RobustErrorHandler.kt"
+)
+core_contract = json.loads(
+    read(
+        "contracts/bci-core-v1.json"
+    )
+)
+contract_audio = core_contract["audio"]["capture"]
+contract_whisper = core_contract["audio"]["whisper"]
+contract_baseline = core_contract["baseline"]
+contract_broadcast = core_contract["broadcast"]
+contract_error = core_contract["robustErrorHandling"]
 
 # Kotlin <-> JNI/C++
 verify_jni_surface(
@@ -267,14 +281,26 @@ broadcast_channels = kotlin_const_int(broadcast_config, "CHANNELS")
 broadcast_bitrate = kotlin_const_int(broadcast_config, "BITRATE_KBPS")
 broadcast_codec = kotlin_const_string(broadcast_config, "INPUT_CODEC")
 
-require(service_rate == 44_100, f"Audio service must capture at 44100 Hz, got {service_rate}")
+require(
+    service_rate == contract_audio["sampleRateHz"],
+    f"Audio service sample rate {service_rate} does not match core contract {contract_audio['sampleRateHz']}",
+)
 require(
     service_rate == broadcast_rate,
     f"capture/publisher sample-rate mismatch: {service_rate} vs {broadcast_rate}",
 )
-require(broadcast_channels == 1, "BCI live publisher must remain mono")
-require(broadcast_bitrate == 128, "BCI gateway MP3 target bitrate contract must remain 128 kbps")
-require(broadcast_codec == "pcm_s16le", "publisher/gateway input codec must remain pcm_s16le")
+require(
+    broadcast_channels == contract_audio["channels"],
+    f"publisher channels {broadcast_channels} do not match core contract {contract_audio['channels']}",
+)
+require(
+    broadcast_bitrate == contract_broadcast["publicBitrateKbps"],
+    f"broadcast bitrate {broadcast_bitrate} does not match core contract {contract_broadcast['publicBitrateKbps']}",
+)
+require(
+    broadcast_codec == contract_audio["sampleFormat"],
+    f"publisher codec {broadcast_codec} does not match core contract {contract_audio['sampleFormat']}",
+)
 require("oboe::AudioFormat::I16" in native_audio_cpp, "Oboe capture format must remain PCM16")
 require("oboe::ChannelCount::Mono" in native_audio_cpp, "Oboe capture must remain mono")
 require("setSampleRate(sampleRate)" in native_audio_cpp, "Oboe must use the requested Android sample rate")
@@ -320,13 +346,28 @@ gateway_publisher = one(
     "gateway publisher id",
 )
 
+require(
+    protocol == contract_broadcast["protocol"],
+    f"Android protocol {protocol} does not match core contract {contract_broadcast['protocol']}",
+)
+require(
+    stream_id == contract_broadcast["streamId"],
+    f"Android stream id {stream_id} does not match core contract {contract_broadcast['streamId']}",
+)
+require(
+    publisher_id == contract_broadcast["publisherId"],
+    f"Android publisher id {publisher_id} does not match core contract {contract_broadcast['publisherId']}",
+)
 require(protocol == gateway_protocol, f"protocol mismatch: Android={protocol}, gateway={gateway_protocol}")
 require(stream_id == gateway_stream, f"stream id mismatch: Android={stream_id}, gateway={gateway_stream}")
 require(
     publisher_id == gateway_publisher,
     f"publisher id mismatch: Android={publisher_id}, gateway={gateway_publisher}",
 )
-require(output_codec == "mp3", f"public output codec must remain mp3, got {output_codec}")
+require(
+    output_codec == contract_broadcast["publicCodec"],
+    f"public output codec {output_codec} does not match core contract {contract_broadcast['publicCodec']}",
+)
 require('"pcm_s16le"' in gateway, "gateway must accept Android pcm_s16le input")
 require('"mp3"' in gateway, "gateway must expose MP3 output")
 require(
@@ -374,6 +415,50 @@ require(
     "new EventSource('/api/v1/transcript/" in gateway and "streamId}')" in gateway,
     "public player SSE path must use the gateway stream id",
 )
+
+# Robust error handling contract
+require(
+    core_contract["contract"]["id"] == "bci-core-v1",
+    "machine-readable contract id must remain bci-core-v1",
+)
+require(
+    "class RobustErrorHandler" in robust_handler,
+    "RobustErrorHandler implementation is missing",
+)
+require(
+    "private fun robustErrorLoop()" in audio_service,
+    "AudioMonitorService robust error loop is missing",
+)
+require(
+    "private fun collectHealthObservations()" in audio_service,
+    "AudioMonitorService health observation collector is missing",
+)
+require(
+    "BCI_E_CAPTURE_LOOP" in audio_service
+    and "catch (t: Throwable)" in audio_service,
+    "capture loop must retain an outer exception boundary and stable capture-loop error code",
+)
+require(
+    f'private const val ROBUST_ERROR_CHECK_MS =\n            {contract_error["checkIntervalMs"]}L'
+    in audio_service,
+    "robust error loop interval does not match core contract",
+)
+require(
+    f'private const val CAPTURE_STALL_MS =\n            {contract_baseline["failureRules"]["pcmNoProgressMs"]}L'
+    in audio_service,
+    "capture stall threshold does not match core contract",
+)
+require(
+    f'private const val BASELINE_STALL_MS =\n            {contract_baseline["failureRules"]["baselineNoProgressWhilePcmArrivesMs"]}L'
+    in audio_service,
+    "baseline stall threshold does not match core contract",
+)
+
+for code in contract_error["errorCodes"]:
+    require(
+        code in audio_service or code in robust_handler,
+        f"contract error code {code} is not represented in runtime source",
+    )
 
 # Gateway runtime parity
 docker_bun = one(
@@ -427,3 +512,10 @@ print(f"Whisper input boundary: {service_rate} Hz PCM16 -> 16000 Hz float")
 print(f"Broadcast contract: {protocol} / {stream_id} / {output_codec}")
 print(f"Gateway runtime: Bun {docker_bun} / gateway {server_version}")
 print("OpenGL contract: ES 2.0 manifest + GLSurfaceView/GLES20")
+print("Core contract:", core_contract["contract"]["id"])
+print(
+    "Robust error handling:",
+    f'{contract_error["checkIntervalMs"]} ms checks / '
+    f'{contract_baseline["failureRules"]["pcmNoProgressMs"]} ms capture stall / '
+    f'{contract_baseline["failureRules"]["baselineNoProgressWhilePcmArrivesMs"]} ms baseline stall',
+)
