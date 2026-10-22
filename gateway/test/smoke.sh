@@ -40,6 +40,17 @@ curl -fsS "http://127.0.0.1:$PORT/health" |
 curl -fsS "http://127.0.0.1:$PORT/api/v1/status" |
   grep -q '"id":"bciandroid-main"'
 
+curl -fsS "http://127.0.0.1:$PORT/" |
+  grep -q 'Live Transcription'
+
+curl -fsS "http://127.0.0.1:$PORT/api/v1/transcript/bciandroid-main/history" |
+  grep -q '"segments":\[\]'
+
+sse="$(
+  timeout 1 curl -NsS     "http://127.0.0.1:$PORT/api/v1/transcript/bciandroid-main"     || true
+)"
+grep -q 'retry: 2000' <<<"$sse"
+
 code="$(
   curl -sS -o /dev/null -w '%{http_code}'     "http://127.0.0.1:$PORT/api/v1/admin/status"
 )"
