@@ -12,6 +12,7 @@ on:
       - "settings.gradle.kts"
       - "gradle.properties"
       - ".gitmodules"
+      - "scripts/verify-module-contracts.py"
       - ".github/workflows/build-android.yml"
   pull_request:
     paths:
@@ -21,6 +22,7 @@ on:
       - "settings.gradle.kts"
       - "gradle.properties"
       - ".gitmodules"
+      - "scripts/verify-module-contracts.py"
       - ".github/workflows/build-android.yml"
 
 jobs:
@@ -104,7 +106,8 @@ jobs:
             app/src/main/java/org/beaconcomputinginitiative/bciwhisper/broadcast/BroadcastConfig.kt \
             app/src/main/java/org/beaconcomputinginitiative/bciwhisper/broadcast/BroadcastPublisher.kt \
             app/src/main/java/org/beaconcomputinginitiative/bciwhisper/broadcast/PublisherCredentialStore.kt \
-            app/build.gradle.kts
+            app/build.gradle.kts \
+            scripts/verify-module-contracts.py
 
       - name: Native architecture invariant
         shell: bash
@@ -125,6 +128,9 @@ jobs:
           grep -q "LiveTranscriptionEngine" app/src/main/java/org/beaconcomputinginitiative/bciwhisper/audio/AudioMonitorService.kt
           grep -q "submitTranscript" app/src/main/java/org/beaconcomputinginitiative/bciwhisper/broadcast/BroadcastPublisher.kt
           grep -q "transcribeLivePcm" app/src/main/java/org/beaconcomputinginitiative/bciwhisper/transcription/TranscriptionEngine.kt
+
+      - name: Cross-module compatibility contracts
+        run: python3 scripts/verify-module-contracts.py
 
       - name: Run JVM regression tests
         run: gradle --no-daemon --stacktrace :app:testDebugUnitTest
@@ -169,40 +175,77 @@ jobs:
           ! grep -q "WRITE_EXTERNAL_STORAGE" /tmp/bci-permissions.txt
           ! grep -q "POST_NOTIFICATIONS" /tmp/bci-permissions.txt
 
+          grep -q "native-code: 'arm64-v8a'" /tmp/bci-badging.txt
           sha256sum "$APK"
+
+      - name: Verify native APK linkage
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          NATIVE_DIR=/tmp/bci-native-audit
+          rm -rf "$NATIVE_DIR"
+          mkdir -p "$NATIVE_DIR"
+          unzip -q "$APK" 'lib/arm64-v8a/*' -d "$NATIVE_DIR"
+
+          for lib in             libbciwhisper_whisper.so             libc++_shared.so             libggml.so             libggml-base.so             libggml-cpu.so             liboboe.so             libomp.so
+          do
+            test -s "$NATIVE_DIR/lib/arm64-v8a/$lib"
+          done
+
+          LLVM_BIN="$SDK_ROOT/ndk/25.2.9519653/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          NM="$LLVM_BIN/llvm-nm"
+          READELF="$LLVM_BIN/llvm-readelf"
+          test -x "$NM"
+          test -x "$READELF"
+
+          CORE="$NATIVE_DIR/lib/arm64-v8a/libbciwhisper_whisper.so"
+          "$READELF" -d "$CORE" | tee /tmp/bci-native-needed.txt
+
+          for dep in             libggml.so             libggml-base.so             libggml-cpu.so             liboboe.so             libc++_shared.so
+          do
+            grep -q "\[$dep\]" /tmp/bci-native-needed.txt
+          done
+
+          "$NM" -D --defined-only "$CORE" | tee /tmp/bci-jni-exports.txt
+
+          for symbol in             Java_org_beaconcomputinginitiative_bciwhisper_audio_NativeAudioEngine_startCapture             Java_org_beaconcomputinginitiative_bciwhisper_audio_NativeAudioEngine_stopCapture             Java_org_beaconcomputinginitiative_bciwhisper_audio_NativeAudioEngine_readPcm16             Java_org_beaconcomputinginitiative_bciwhisper_audio_NativeAudioEngine_captureActive             Java_org_beaconcomputinginitiative_bciwhisper_audio_NativeAudioEngine_actualSampleRate             Java_org_beaconcomputinginitiative_bciwhisper_audio_NativeAudioEngine_framesPerBurst             Java_org_beaconcomputinginitiative_bciwhisper_audio_NativeAudioEngine_xRunCount             Java_org_beaconcomputinginitiative_bciwhisper_audio_NativeAudioEngine_sessionId             Java_org_beaconcomputinginitiative_bciwhisper_audio_NativeAudioEngine_audioApi             Java_org_beaconcomputinginitiative_bciwhisper_audio_NativeAudioEngine_droppedFrames             Java_org_beaconcomputinginitiative_bciwhisper_transcription_NativeTranscriptionEngine_warmModel             Java_org_beaconcomputinginitiative_bciwhisper_transcription_NativeTranscriptionEngine_resamplePcm16To16k             Java_org_beaconcomputinginitiative_bciwhisper_transcription_NativeTranscriptionEngine_assessQuality             Java_org_beaconcomputinginitiative_bciwhisper_transcription_NativeTranscriptionEngine_transcribe             Java_org_beaconcomputinginitiative_bciwhisper_transcription_NativeTranscriptionEngine_segmentCount             Java_org_beaconcomputinginitiative_bciwhisper_transcription_NativeTranscriptionEngine_segmentText             Java_org_beaconcomputinginitiative_bciwhisper_transcription_NativeTranscriptionEngine_segmentStart10ms             Java_org_beaconcomputinginitiative_bciwhisper_transcription_NativeTranscriptionEngine_segmentEnd10ms             Java_org_beaconcomputinginitiative_bciwhisper_transcription_NativeTranscriptionEngine_shutdown
+          do
+            grep -q " $symbol$" /tmp/bci-jni-exports.txt
+          done
 
       - name: Stage artifact
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p out
-          cp app/build/outputs/apk/debug/app-debug.apk             out/BCIWhisper-v6.0-Android-alpha18-debug.apk
+          cp app/build/outputs/apk/debug/app-debug.apk             out/BCIWhisper-v6.0-Android-alpha19-debug.apk
           (
             cd out
-            sha256sum BCIWhisper-v6.0-Android-alpha18-debug.apk               > BCIWhisper-v6.0-Android-alpha18-debug.apk.sha256
+            sha256sum BCIWhisper-v6.0-Android-alpha19-debug.apk               > BCIWhisper-v6.0-Android-alpha19-debug.apk.sha256
           )
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: BCIWhisper-Android-alpha18
+          name: BCIWhisper-Android-alpha19
           path: out/*
           if-no-files-found: error
           retention-days: 14
 
-      - name: Publish Alpha 18 GitHub release
+      - name: Publish Alpha 19 GitHub release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="android-v6.0-alpha18"
-          APK="out/BCIWhisper-v6.0-Android-alpha18-debug.apk"
-          HASH="out/BCIWhisper-v6.0-Android-alpha18-debug.apk.sha256"
+          TAG="android-v6.0-alpha19"
+          APK="out/BCIWhisper-v6.0-Android-alpha19-debug.apk"
+          HASH="out/BCIWhisper-v6.0-Android-alpha19-debug.apk.sha256"
 
           if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             gh release upload "$TAG" "$APK" "$HASH"               --clobber               --repo "${{ github.repository }}"
           else
-            gh release create "$TAG" "$APK" "$HASH"               --repo "${{ github.repository }}"               --target "${{ github.sha }}"               --title "BCIWhisper Android v6.0 Alpha 18"               --notes "BCIAndroid Alpha 18 native-engine build. Developer Seal: CJB-DEV-2026."
+            gh release create "$TAG" "$APK" "$HASH"               --repo "${{ github.repository }}"               --target "${{ github.sha }}"               --title "BCIWhisper Android v6.0 Alpha 19"               --notes "BCIAndroid Alpha 19 cross-module compatibility build. Developer Seal: CJB-DEV-2026."
           fi
