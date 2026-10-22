@@ -123,7 +123,6 @@ class AudioMonitorService : Service() {
     @Volatile private var lastError: String? = null
     @Volatile private var lastEventSummary: String? = null
 
-    private var audioRecord: AudioRecord? = null
     private var worker: Thread? = null
 
     private var lastNotificationSignature: String? =
@@ -348,116 +347,67 @@ class AudioMonitorService : Service() {
             }
     }
 
-    private fun buildRecorder():
-        AudioRecord {
-        val minBuffer =
-            AudioRecord
-                .getMinBufferSize(
-                    SAMPLE_RATE,
-                    AudioFormat
-                        .CHANNEL_IN_MONO,
-                    AudioFormat
-                        .ENCODING_PCM_16BIT
-                )
+    private data class NativeInputRoute(
+        val deviceId: Int,
+        val communicationPreset: Boolean,
+        val capability: AudioInputOptimizer.Capability
+    )
 
-        require(minBuffer > 0) {
-            "AudioRecord.getMinBufferSize " +
-                "failed: $minBuffer"
-        }
+    private fun prepareNativeInput(): NativeInputRoute {
+        val usingBluetooth =
+            inputSource ==
+                INPUT_SOURCE_BLUETOOTH
 
-        val usingBluetooth = inputSource == INPUT_SOURCE_BLUETOOTH
-
-        val route = if (usingBluetooth) {
-            bluetoothRouter.route()
-        } else {
-            bluetoothRouter.clear()
-            val builtIn =
-                inputOptimizer
-                    .builtInMicrophone()
-
-            BluetoothAudioRouter.RouteResult(
-                routed = true,
-                label =
-                    builtIn
-                        ?.productName
-                        ?.toString()
-                        ?.takeIf {
-                            it.isNotBlank()
-                        }
-                        ?: "Phone microphone",
-                device = builtIn
-            )
-        }
-
-        require(route.routed) { route.label }
-        inputDevice = route.label
-
-        val source =
+        val route =
             if (usingBluetooth) {
-                MediaRecorder.AudioSource.VOICE_COMMUNICATION
-            } else if (Build.VERSION.SDK_INT >= 24) {
-                MediaRecorder.AudioSource.UNPROCESSED
+                bluetoothRouter.route()
             } else {
-                MediaRecorder.AudioSource.VOICE_RECOGNITION
+                bluetoothRouter.clear()
+
+                val builtIn =
+                    inputOptimizer
+                        .builtInMicrophone()
+
+                BluetoothAudioRouter.RouteResult(
+                    routed = true,
+                    label =
+                        builtIn
+                            ?.productName
+                            ?.toString()
+                            ?.takeIf {
+                                it.isNotBlank()
+                            }
+                            ?: "Phone microphone",
+                    device = builtIn
+                )
             }
 
-        val format =
-            AudioFormat.Builder()
-                .setEncoding(
-                    AudioFormat
-                        .ENCODING_PCM_16BIT
-                )
-                .setSampleRate(
-                    SAMPLE_RATE
-                )
-                .setChannelMask(
-                    AudioFormat
-                        .CHANNEL_IN_MONO
-                )
-                .build()
-
-        val built = AudioRecord.Builder()
-            .setAudioSource(source)
-            .setAudioFormat(format)
-            .setBufferSizeInBytes(
-                (minBuffer * 4)
-                    .coerceAtLeast(32768)
-            )
-            .build()
-
-        if (route.device != null) {
-            if (usingBluetooth) {
-                bluetoothRouter.prefer(
-                    built,
-                    route.device
-                )
-            } else {
-                inputOptimizer.prefer(
-                    built,
-                    route.device
-                )
-            }
+        require(
+            route.routed
+        ) {
+            route.label
         }
+
+        inputDevice =
+            route.label
 
         val capability =
-            inputOptimizer.capability(
-                route.device,
-                route.label
-            )
-
-        val processing =
             inputOptimizer
-                .disableVoiceProcessing(
-                    built
+                .capability(
+                    route.device,
+                    route.label
                 )
 
-        inputCapabilities =
-            inputOptimizer.describe(
-                capability,
-                processing
-            )
-
-        return built
+        return NativeInputRoute(
+            deviceId =
+                route.device
+                    ?.id
+                    ?: 0,
+            communicationPreset =
+                usingBluetooth,
+            capability =
+                capability
+        )
     }
 
     private fun startMonitoring() {
@@ -485,16 +435,52 @@ class AudioMonitorService : Service() {
         )
 
         try {
-            audioRecord =
-                buildRecorder()
+            val route =
+                prepareNativeInput()
 
             check(
-                audioRecord?.state ==
-                    AudioRecord
-                        .STATE_INITIALIZED
+                NativeAudioEngine
+                    .startCapture(
+                        sampleRate =
+                            SAMPLE_RATE,
+                        deviceId =
+                            route.deviceId,
+                        communicationPreset =
+                            route.communicationPreset
+                    )
             ) {
-                "AudioRecord did not initialize"
+                "Oboe input stream did not initialize"
             }
+
+            val actualRate =
+                NativeAudioEngine
+                    .actualSampleRate()
+
+            check(
+                actualRate ==
+                    SAMPLE_RATE
+            ) {
+                "Oboe sample-rate contract mismatch: " +
+                    "$actualRate Hz"
+            }
+
+            val processing =
+                inputOptimizer
+                    .disableVoiceProcessing(
+                        NativeAudioEngine
+                            .sessionId()
+                    )
+
+            inputCapabilities =
+                inputOptimizer
+                    .describe(
+                        route.capability,
+                        processing
+                    ) +
+                    " • Oboe native" +
+                    " • burst:" +
+                    NativeAudioEngine
+                        .framesPerBurst()
 
             ring.clear()
             detector.reset()
@@ -517,9 +503,6 @@ class AudioMonitorService : Service() {
             lastError = null
             lastEventSummary = null
 
-            audioRecord!!
-                .startRecording()
-
             running = true
 
             worker =
@@ -527,7 +510,7 @@ class AudioMonitorService : Service() {
                     {
                         captureLoop()
                     },
-                    "BCI-AudioBoundary"
+                    "BCI-OboeDrain"
                 ).also {
                     it.start()
                 }
@@ -542,8 +525,8 @@ class AudioMonitorService : Service() {
 
             running = false
 
-            audioRecord?.release()
-            audioRecord = null
+            NativeAudioEngine
+                .stopCapture()
 
             stopForeground(
                 STOP_FOREGROUND_REMOVE
@@ -554,9 +537,9 @@ class AudioMonitorService : Service() {
     }
 
     private fun captureLoop() {
-        // Keep microphone transport and detector work ahead of non-real-time
-        // transcription/mastering CPU load. Some vendor kernels may reject the
-        // requested audio priority, so the request is best-effort.
+        // Oboe owns the real-time microphone callback and writes into a native
+        // SPSC ring. This worker drains larger PCM blocks for Kotlin-side
+        // detection/recording without blocking the native audio callback.
         runCatching {
             Process.setThreadPriority(
                 Process.THREAD_PRIORITY_AUDIO
@@ -568,19 +551,26 @@ class AudioMonitorService : Service() {
 
         while (running) {
             val n =
-                audioRecord?.read(
-                    block,
-                    0,
-                    block.size,
-                    AudioRecord
-                        .READ_BLOCKING
-                ) ?: -1
+                NativeAudioEngine
+                    .readPcm16(
+                        destination =
+                            block,
+                        requestedFrames =
+                            block.size,
+                        timeoutMs =
+                            250
+                    )
 
             if (n <= 0) {
-                if (running) {
+                if (
+                    running &&
+                    !NativeAudioEngine
+                        .captureActive()
+                ) {
                     lastError =
-                        "AudioRecord.read " +
-                            "returned $n"
+                        "Oboe input stream stopped"
+                    running = false
+                    break
                 }
 
                 continue
@@ -794,10 +784,8 @@ class AudioMonitorService : Service() {
 
         running = false
 
-        try {
-            audioRecord?.stop()
-        } catch (_: Throwable) {
-        }
+        NativeAudioEngine
+            .stopCapture()
 
         try {
             worker?.join(
@@ -809,9 +797,6 @@ class AudioMonitorService : Service() {
         }
 
         worker = null
-
-        audioRecord?.release()
-        audioRecord = null
 
         stopForeground(
             STOP_FOREGROUND_REMOVE
@@ -830,13 +815,8 @@ class AudioMonitorService : Service() {
 
         running = false
 
-        try {
-            audioRecord?.stop()
-        } catch (_: Throwable) {
-        }
-
-        audioRecord?.release()
-        audioRecord = null
+        NativeAudioEngine
+            .stopCapture()
 
         super.onDestroy()
     }

@@ -10,6 +10,8 @@ set(WHISPER_ROOT "${CMAKE_SOURCE_DIR}/../../../../../vendor/whisper.cpp")
 find_library(LOG_LIB log)
 find_library(ANDROID_LIB android)
 
+find_package(oboe REQUIRED CONFIG)
+
 include(FetchContent)
 FetchContent_Declare(ggml SOURCE_DIR "${WHISPER_ROOT}/ggml")
 FetchContent_MakeAvailable(ggml)
@@ -19,6 +21,7 @@ add_library(
     SHARED
     "${WHISPER_ROOT}/src/whisper.cpp"
     "${CMAKE_SOURCE_DIR}/native_engine.cpp"
+    "${CMAKE_SOURCE_DIR}/audio_engine.cpp"
 )
 
 target_compile_definitions(
@@ -43,6 +46,7 @@ target_link_libraries(
     bciwhisper_whisper
     PRIVATE
     ggml
+    oboe::oboe
     ${LOG_LIB}
     ${ANDROID_LIB}
 )

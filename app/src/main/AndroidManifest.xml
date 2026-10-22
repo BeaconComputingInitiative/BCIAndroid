@@ -1,4 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-feature
+        android:glEsVersion="0x00020000"
+        android:required="true" />
+
     <!-- Runtime permission: requested once on first launch. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
