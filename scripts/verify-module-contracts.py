@@ -180,6 +180,9 @@ broadcast_publisher = read(
 live_tx = read(
     "app/src/main/java/org/beaconcomputinginitiative/bciwhisper/transcription/LiveTranscriptionEngine.kt"
 )
+transcription_engine = read(
+    "app/src/main/java/org/beaconcomputinginitiative/bciwhisper/transcription/TranscriptionEngine.kt"
+)
 spectrum = read(
     "app/src/main/java/org/beaconcomputinginitiative/bciwhisper/ui/Spectrum3DView.kt"
 )
@@ -276,8 +279,12 @@ require("oboe::AudioFormat::I16" in native_audio_cpp, "Oboe capture format must 
 require("oboe::ChannelCount::Mono" in native_audio_cpp, "Oboe capture must remain mono")
 require("setSampleRate(sampleRate)" in native_audio_cpp, "Oboe must use the requested Android sample rate")
 require(
-    "resamplePcm16To16k" in live_tx,
-    "rolling transcription must explicitly cross the 44.1 kHz -> 16 kHz boundary",
+    "transcribeLivePcm" in live_tx,
+    "rolling worker must delegate live PCM transcription through TranscriptionEngine",
+)
+require(
+    "resamplePcm16To16k" in transcription_engine,
+    "TranscriptionEngine must own the explicit 44.1 kHz -> 16 kHz native resampling boundary",
 )
 
 # OpenGL ES contract
