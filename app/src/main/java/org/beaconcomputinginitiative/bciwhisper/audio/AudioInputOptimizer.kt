@@ -79,6 +79,77 @@ class AudioInputOptimizer(
             )
 
     fun disableVoiceProcessing(
+        sessionId: Int
+    ): ProcessingState {
+        val session =
+            sessionId
+
+        val agc =
+            if (
+                session > 0 &&
+                AutomaticGainControl.isAvailable()
+            ) {
+                runCatching {
+                    AutomaticGainControl
+                        .create(session)
+                        ?.also {
+                            it.enabled = false
+                        }
+                }.getOrNull()
+            } else {
+                null
+            }
+
+        val ns =
+            if (
+                session > 0 &&
+                NoiseSuppressor.isAvailable()
+            ) {
+                runCatching {
+                    NoiseSuppressor
+                        .create(session)
+                        ?.also {
+                            it.enabled = false
+                        }
+                }.getOrNull()
+            } else {
+                null
+            }
+
+        val aec =
+            if (
+                session > 0 &&
+                AcousticEchoCanceler.isAvailable()
+            ) {
+                runCatching {
+                    AcousticEchoCanceler
+                        .create(session)
+                        ?.also {
+                            it.enabled = false
+                        }
+                }.getOrNull()
+            } else {
+                null
+            }
+
+        val state =
+            ProcessingState(
+                automaticGainControlDisabled =
+                    agc?.enabled == false,
+                noiseSuppressorDisabled =
+                    ns?.enabled == false,
+                acousticEchoCancelerDisabled =
+                    aec?.enabled == false
+            )
+
+        agc?.release()
+        ns?.release()
+        aec?.release()
+
+        return state
+    }
+
+    fun disableVoiceProcessing(
         recorder: AudioRecord
     ): ProcessingState {
         val session =
