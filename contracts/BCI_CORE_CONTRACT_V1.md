@@ -110,6 +110,14 @@ Both are fatal for that monitoring session because continuing would leave the UI
 
 A fatal baseline/capture stall must stop monitoring safely. It must **not** terminate the Android process.
 
+### Baseline resource priority
+
+Baseline/native audio startup has priority over offline Whisper model warm-up.
+
+The Activity must not automatically warm the offline Whisper model from `onCreate()`. Offline model warm-up is lazy and begins when the transcription workflow is opened. This prevents model allocation/inference initialization from competing with the first Oboe stream open, detector reset, and baseline startup.
+
+Live-caption warm-up is separate: it may start when the operator explicitly enables Go Live, and it remains on the dedicated live-transcription worker rather than the Oboe callback.
+
 ## 4. JNI contract
 
 Both Kotlin native surfaces load exactly:
