@@ -606,7 +606,7 @@ class MainActivity : Activity() {
 
         header.addView(
             TextView(this).apply {
-                text = "ANDROID • v6.0 • ALPHA 17"
+                text = "ANDROID • v6.0 • ALPHA 18"
                 textSize = 10f
                 setTextColor(muted)
                 typeface = uiTypeface
@@ -2218,10 +2218,13 @@ class MainActivity : Activity() {
                 BroadcastPublisher.State.LIVE ->
                     String.format(
                         Locale.US,
-                        "LIVE • %.2f MB sent • %d dropped",
+                        "LIVE • %.2f MB • audio drop %d • CC %d / drop %d • decode %d ms",
                         snapshot.broadcastBytesSent /
                             (1024.0 * 1024.0),
-                        snapshot.broadcastDroppedFrames
+                        snapshot.broadcastDroppedFrames,
+                        snapshot.broadcastTranscriptSegments,
+                        snapshot.broadcastDroppedTranscripts,
+                        snapshot.liveTranscriptionDecodeMs
                     )
 
                 BroadcastPublisher.State.CONNECTING ->
