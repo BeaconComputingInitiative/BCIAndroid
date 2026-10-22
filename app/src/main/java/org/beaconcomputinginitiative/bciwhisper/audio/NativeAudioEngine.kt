@@ -25,6 +25,7 @@ object NativeAudioEngine {
         timeoutMs: Int
     ): Int
 
+    external fun captureActive(): Boolean
     external fun actualSampleRate(): Int
     external fun framesPerBurst(): Int
     external fun xRunCount(): Int
