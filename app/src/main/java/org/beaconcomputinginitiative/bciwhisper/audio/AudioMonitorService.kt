@@ -19,6 +19,7 @@ import org.beaconcomputinginitiative.bciwhisper.broadcast.BroadcastConfig
 import org.beaconcomputinginitiative.bciwhisper.broadcast.BroadcastPublisher
 import org.beaconcomputinginitiative.bciwhisper.broadcast.PublisherCredentialStore
 import org.beaconcomputinginitiative.bciwhisper.transcription.LiveTranscriptionEngine
+import org.beaconcomputinginitiative.bciwhisper.runtime.RobustErrorHandler
 import java.io.File
 import kotlin.math.log10
 import kotlin.math.pow
@@ -72,7 +73,13 @@ class AudioMonitorService : Service() {
         val liveTranscriptionSkippedWindows: Long,
         val liveTranscriptionText: String?,
         val liveTranscriptionError: String?,
-        val broadcastLastError: String?
+        val broadcastLastError: String?,
+        val healthStatus: RobustErrorHandler.Status,
+        val healthChecks: Long,
+        val rootErrorCode: String?,
+        val rootErrorMessage: String?,
+        val lastErrorCode: String?,
+        val lastErrorMessage: String?
     )
 
     private val binder = LocalBinder()
@@ -81,6 +88,41 @@ class AudioMonitorService : Service() {
 
     private val publisher =
         BroadcastPublisher()
+
+    private val robustErrorHandler =
+        RobustErrorHandler()
+
+    @Volatile
+    private var robustErrorLoopRunning =
+        false
+
+    private var robustErrorThread:
+        Thread? =
+        null
+
+    private var healthLastFrames =
+        0L
+
+    private var healthLastFrameProgressMs =
+        0L
+
+    private var healthLastBaselineSeconds =
+        0.0
+
+    private var healthLastBaselineProgressMs =
+        0L
+
+    private var healthLastNativeXruns =
+        0
+
+    private var healthLastNativeDroppedFrames =
+        0L
+
+    private var healthLastBroadcastDroppedFrames =
+        0L
+
+    private var healthLastBroadcastDroppedTranscripts =
+        0L
 
     private val publisherCredentials by lazy {
         PublisherCredentialStore(this)
@@ -279,6 +321,9 @@ class AudioMonitorService : Service() {
         val captions =
             liveTranscription.snapshot()
 
+        val health =
+            robustErrorHandler.snapshot()
+
         return Snapshot(
             running = running,
             sampleRate = SAMPLE_RATE,
@@ -340,7 +385,19 @@ class AudioMonitorService : Service() {
             liveTranscriptionError =
                 captions.lastError,
             broadcastLastError =
-                broadcast.lastError
+                broadcast.lastError,
+            healthStatus =
+                health.status,
+            healthChecks =
+                health.checks,
+            rootErrorCode =
+                health.rootFault?.code,
+            rootErrorMessage =
+                health.rootFault?.message,
+            lastErrorCode =
+                health.lastFault?.code,
+            lastErrorMessage =
+                health.lastFault?.message
         )
     }
 
@@ -556,7 +613,12 @@ class AudioMonitorService : Service() {
             lastError = null
             lastEventSummary = null
 
+            robustErrorHandler
+                .resetSession()
+
             running = true
+
+            startRobustErrorHandling()
 
             worker =
                 Thread(
@@ -572,20 +634,31 @@ class AudioMonitorService : Service() {
                 force = true
             )
         } catch (t: Throwable) {
-            lastError =
+            val message =
                 "${t::class.simpleName}: " +
-                    "${t.message}"
+                    (
+                        t.message
+                            ?: "monitor startup failure"
+                        )
 
-            running = false
-
-            NativeAudioEngine
-                .stopCapture()
-
-            stopForeground(
-                STOP_FOREGROUND_REMOVE
+            recordImmediateFault(
+                code =
+                    BCI_E_MONITOR_START,
+                module =
+                    "android.audio.startup",
+                severity =
+                    RobustErrorHandler
+                        .Severity.FATAL,
+                message =
+                    message,
+                fatal =
+                    true
             )
 
-            stopSelf()
+            failMonitoringSafely(
+                BCI_E_MONITOR_START,
+                message
+            )
         }
     }
 
@@ -606,9 +679,10 @@ class AudioMonitorService : Service() {
             false
 
         while (running) {
-            val n =
-                NativeAudioEngine
-                    .readPcm16(
+            try {
+                val n =
+                    NativeAudioEngine
+                        .readPcm16(
                         destination =
                             block,
                         requestedFrames =
@@ -623,9 +697,25 @@ class AudioMonitorService : Service() {
                     !NativeAudioEngine
                         .captureActive()
                 ) {
-                    lastError =
+                    recordImmediateFault(
+                        code =
+                            BCI_E_AUDIO_INACTIVE,
+                        module =
+                            "native.audio",
+                        severity =
+                            RobustErrorHandler
+                                .Severity.FATAL,
+                        message =
+                            "Oboe input stream stopped",
+                        fatal =
+                            true
+                    )
+
+                    failMonitoringSafely(
+                        BCI_E_AUDIO_INACTIVE,
                         "Oboe input stream stopped"
-                    running = false
+                    )
+
                     break
                 }
 
@@ -761,7 +851,36 @@ class AudioMonitorService : Service() {
                 }
             }
 
-            updateNotification()
+                updateNotification()
+            } catch (t: Throwable) {
+                val message =
+                    "${t::class.simpleName}: " +
+                        (
+                            t.message
+                                ?: "capture loop failure"
+                            )
+
+                recordImmediateFault(
+                    code =
+                        BCI_E_CAPTURE_LOOP,
+                    module =
+                        "android.audio.capture",
+                    severity =
+                        RobustErrorHandler
+                            .Severity.FATAL,
+                    message =
+                        message,
+                    fatal =
+                        true
+                )
+
+                failMonitoringSafely(
+                    BCI_E_CAPTURE_LOOP,
+                    message
+                )
+
+                break
+            }
         }
     }
 
@@ -856,6 +975,7 @@ class AudioMonitorService : Service() {
     }
 
     private fun stopMonitoring() {
+        stopRobustErrorHandling()
         liveTranscription.stop()
         publisher.stop()
         bluetoothRouter.clear()
@@ -890,6 +1010,7 @@ class AudioMonitorService : Service() {
     }
 
     override fun onDestroy() {
+        stopRobustErrorHandling()
         liveTranscription.stop()
         publisher.stop()
         bluetoothRouter.clear()
@@ -904,6 +1025,675 @@ class AudioMonitorService : Service() {
             .stopCapture()
 
         super.onDestroy()
+    }
+
+    private fun startRobustErrorHandling() {
+        if (robustErrorLoopRunning) {
+            return
+        }
+
+        val now =
+            SystemClock
+                .elapsedRealtime()
+
+        healthLastFrames =
+            framesCaptured
+
+        healthLastFrameProgressMs =
+            now
+
+        healthLastBaselineSeconds =
+            baselineSeconds
+
+        healthLastBaselineProgressMs =
+            now
+
+        healthLastNativeXruns =
+            runCatching {
+                NativeAudioEngine
+                    .xRunCount()
+            }
+                .getOrDefault(
+                    0
+                )
+
+        healthLastNativeDroppedFrames =
+            runCatching {
+                NativeAudioEngine
+                    .droppedFrames()
+            }
+                .getOrDefault(
+                    0L
+                )
+
+        val broadcast =
+            publisher.snapshot()
+
+        healthLastBroadcastDroppedFrames =
+            broadcast.droppedFrames
+
+        healthLastBroadcastDroppedTranscripts =
+            broadcast.droppedTranscripts
+
+        robustErrorLoopRunning =
+            true
+
+        robustErrorThread =
+            Thread(
+                {
+                    robustErrorLoop()
+                },
+                "BCI-RobustErrorHandler"
+            ).apply {
+                priority =
+                    Thread.NORM_PRIORITY -
+                        1
+
+                start()
+            }
+    }
+
+    private fun stopRobustErrorHandling() {
+        robustErrorLoopRunning =
+            false
+
+        val thread =
+            robustErrorThread
+
+        thread?.interrupt()
+
+        if (
+            thread !=
+            null &&
+            thread !==
+            Thread.currentThread()
+        ) {
+            try {
+                thread.join(
+                    750L
+                )
+            } catch (
+                _: InterruptedException
+            ) {
+                Thread
+                    .currentThread()
+                    .interrupt()
+            }
+        }
+
+        if (
+            thread ===
+            robustErrorThread
+        ) {
+            robustErrorThread =
+                null
+        }
+    }
+
+    private fun robustErrorLoop() {
+        while (
+            robustErrorLoopRunning
+        ) {
+            try {
+                val observations =
+                    collectHealthObservations()
+
+                val faults =
+                    robustErrorHandler
+                        .completeCheck(
+                            observations
+                        )
+
+                val fatal =
+                    faults
+                        .firstOrNull {
+                            it.fatal ||
+                                it.severity ==
+                                RobustErrorHandler
+                                    .Severity.FATAL
+                        }
+
+                if (
+                    fatal !=
+                    null &&
+                    running
+                ) {
+                    failMonitoringSafely(
+                        fatal.code,
+                        fatal.message
+                    )
+                }
+            } catch (
+                t: Throwable
+            ) {
+                val message =
+                    "${t::class.simpleName}: " +
+                        (
+                            t.message
+                                ?: "robust error handler failure"
+                            )
+
+                runCatching {
+                    robustErrorHandler
+                        .completeCheck(
+                            listOf(
+                                RobustErrorHandler
+                                    .Observation(
+                                        code =
+                                            BCI_E_ERROR_HANDLER,
+                                        module =
+                                            "android.robust_error_handler",
+                                        severity =
+                                            RobustErrorHandler
+                                                .Severity.ERROR,
+                                        message =
+                                            message,
+                                        fatal =
+                                            false
+                                    )
+                            )
+                        )
+                }
+
+                lastError =
+                    "$BCI_E_ERROR_HANDLER • " +
+                        message
+            }
+
+            try {
+                Thread.sleep(
+                    ROBUST_ERROR_CHECK_MS
+                )
+            } catch (
+                _: InterruptedException
+            ) {
+                if (
+                    !robustErrorLoopRunning
+                ) {
+                    return
+                }
+            }
+        }
+    }
+
+    private fun collectHealthObservations():
+        List<RobustErrorHandler.Observation> {
+        val observations =
+            ArrayList<
+                RobustErrorHandler
+                    .Observation
+                >()
+
+        val now =
+            SystemClock
+                .elapsedRealtime()
+
+        if (running) {
+            val nativeActive =
+                runCatching {
+                    NativeAudioEngine
+                        .captureActive()
+                }
+                    .getOrElse {
+                        observations.add(
+                            RobustErrorHandler
+                                .Observation(
+                                    code =
+                                        BCI_E_NATIVE_PROBE,
+                                    module =
+                                        "native.audio",
+                                    severity =
+                                        RobustErrorHandler
+                                            .Severity.FATAL,
+                                    message =
+                                        "captureActive probe failed: " +
+                                            (
+                                                it.message
+                                                    ?: it::class
+                                                        .simpleName
+                                                ),
+                                    fatal =
+                                        true
+                                )
+                        )
+
+                        false
+                    }
+
+            if (!nativeActive) {
+                observations.add(
+                    RobustErrorHandler
+                        .Observation(
+                            code =
+                                BCI_E_AUDIO_INACTIVE,
+                            module =
+                                "native.audio",
+                            severity =
+                                RobustErrorHandler
+                                    .Severity.FATAL,
+                            message =
+                                "Native Oboe stream is inactive while monitoring is RUNNING",
+                            fatal =
+                                true
+                        )
+                )
+            }
+
+            val actualRate =
+                runCatching {
+                    NativeAudioEngine
+                        .actualSampleRate()
+                }
+                    .getOrDefault(
+                        0
+                    )
+
+            if (
+                actualRate !=
+                SAMPLE_RATE
+            ) {
+                observations.add(
+                    RobustErrorHandler
+                        .Observation(
+                            code =
+                                BCI_E_SAMPLE_RATE,
+                            module =
+                                "native.audio",
+                            severity =
+                                RobustErrorHandler
+                                    .Severity.FATAL,
+                            message =
+                                "Expected $SAMPLE_RATE Hz, native stream reports $actualRate Hz",
+                            fatal =
+                                true
+                        )
+                )
+            }
+
+            val currentFrames =
+                framesCaptured
+
+            if (
+                currentFrames >
+                healthLastFrames
+            ) {
+                healthLastFrames =
+                    currentFrames
+
+                healthLastFrameProgressMs =
+                    now
+            } else if (
+                currentFrames ==
+                    0L &&
+                now -
+                    healthLastFrameProgressMs >=
+                FIRST_PCM_FRAME_TIMEOUT_MS
+            ) {
+                observations.add(
+                    RobustErrorHandler
+                        .Observation(
+                            code =
+                                BCI_E_CAPTURE_STALL,
+                            module =
+                                "android.audio.capture",
+                            severity =
+                                RobustErrorHandler
+                                    .Severity.FATAL,
+                            message =
+                                "No first PCM frame arrived within " +
+                                    FIRST_PCM_FRAME_TIMEOUT_MS +
+                                    " ms",
+                            fatal =
+                                true
+                        )
+                )
+            } else if (
+                currentFrames >
+                    0L &&
+                now -
+                    healthLastFrameProgressMs >=
+                CAPTURE_STALL_MS
+            ) {
+                observations.add(
+                    RobustErrorHandler
+                        .Observation(
+                            code =
+                                BCI_E_CAPTURE_STALL,
+                            module =
+                                "android.audio.capture",
+                            severity =
+                                RobustErrorHandler
+                                    .Severity.FATAL,
+                            message =
+                                "PCM frame progress stopped for " +
+                                    (
+                                        now -
+                                            healthLastFrameProgressMs
+                                        ) +
+                                    " ms",
+                            fatal =
+                                true
+                        )
+                )
+            }
+
+            if (!baselineComplete) {
+                val currentBaseline =
+                    baselineSeconds
+
+                if (
+                    currentBaseline >
+                    healthLastBaselineSeconds +
+                        0.01
+                ) {
+                    healthLastBaselineSeconds =
+                        currentBaseline
+
+                    healthLastBaselineProgressMs =
+                        now
+                } else if (
+                    currentFrames >
+                        0L &&
+                    now -
+                        healthLastBaselineProgressMs >=
+                    BASELINE_STALL_MS
+                ) {
+                    observations.add(
+                        RobustErrorHandler
+                            .Observation(
+                                code =
+                                    BCI_E_BASELINE_STALL,
+                                module =
+                                    "kotlin.detection",
+                                severity =
+                                    RobustErrorHandler
+                                        .Severity.FATAL,
+                                message =
+                                    "PCM is arriving but baseline progress has not advanced for " +
+                                        (
+                                            now -
+                                                healthLastBaselineProgressMs
+                                            ) +
+                                        " ms",
+                                fatal =
+                                    true
+                            )
+                    )
+                }
+            }
+
+            val xruns =
+                runCatching {
+                    NativeAudioEngine
+                        .xRunCount()
+                }
+                    .getOrDefault(
+                        healthLastNativeXruns
+                    )
+
+            if (
+                xruns >
+                healthLastNativeXruns
+            ) {
+                observations.add(
+                    RobustErrorHandler
+                        .Observation(
+                            code =
+                                BCI_W_AUDIO_XRUN,
+                            module =
+                                "native.audio",
+                            severity =
+                                RobustErrorHandler
+                                    .Severity.WARNING,
+                            message =
+                                "Oboe xRun count increased by " +
+                                    (
+                                        xruns -
+                                            healthLastNativeXruns
+                                        ),
+                            fatal =
+                                false
+                        )
+                )
+
+                healthLastNativeXruns =
+                    xruns
+            }
+
+            val nativeDropped =
+                runCatching {
+                    NativeAudioEngine
+                        .droppedFrames()
+                }
+                    .getOrDefault(
+                        healthLastNativeDroppedFrames
+                    )
+
+            if (
+                nativeDropped >
+                healthLastNativeDroppedFrames
+            ) {
+                observations.add(
+                    RobustErrorHandler
+                        .Observation(
+                            code =
+                                BCI_W_NATIVE_RING_DROP,
+                            module =
+                                "native.audio",
+                            severity =
+                                RobustErrorHandler
+                                    .Severity.WARNING,
+                            message =
+                                "Native ring dropped " +
+                                    (
+                                        nativeDropped -
+                                            healthLastNativeDroppedFrames
+                                        ) +
+                                    " PCM frame(s)",
+                            fatal =
+                                false
+                        )
+                )
+
+                healthLastNativeDroppedFrames =
+                    nativeDropped
+            }
+        }
+
+        val captions =
+            liveTranscription
+                .snapshot()
+
+        captions.lastError
+            ?.takeIf {
+                it.isNotBlank()
+            }
+            ?.let {
+                observations.add(
+                    RobustErrorHandler
+                        .Observation(
+                            code =
+                                BCI_E_LIVE_TRANSCRIPTION,
+                            module =
+                                "kotlin.transcription",
+                            severity =
+                                RobustErrorHandler
+                                    .Severity.ERROR,
+                            message =
+                                it,
+                            fatal =
+                                false
+                        )
+                )
+            }
+
+        val broadcast =
+            publisher.snapshot()
+
+        if (
+            broadcast.state ==
+            BroadcastPublisher
+                .State.ERROR
+        ) {
+            observations.add(
+                RobustErrorHandler
+                    .Observation(
+                        code =
+                            BCI_E_BROADCAST,
+                        module =
+                            "kotlin.broadcast",
+                        severity =
+                            RobustErrorHandler
+                                .Severity.ERROR,
+                        message =
+                            broadcast.lastError
+                                ?: "Broadcast publisher entered ERROR state",
+                        fatal =
+                            false
+                    )
+            )
+        }
+
+        if (
+            broadcast.droppedFrames >
+            healthLastBroadcastDroppedFrames
+        ) {
+            observations.add(
+                RobustErrorHandler
+                    .Observation(
+                        code =
+                            BCI_W_BROADCAST_AUDIO_DROP,
+                        module =
+                            "kotlin.broadcast",
+                        severity =
+                            RobustErrorHandler
+                                .Severity.WARNING,
+                        message =
+                            "Broadcast publisher dropped " +
+                                (
+                                    broadcast.droppedFrames -
+                                        healthLastBroadcastDroppedFrames
+                                    ) +
+                                " audio frame(s)",
+                        fatal =
+                            false
+                    )
+            )
+
+            healthLastBroadcastDroppedFrames =
+                broadcast.droppedFrames
+        }
+
+        if (
+            broadcast.droppedTranscripts >
+            healthLastBroadcastDroppedTranscripts
+        ) {
+            observations.add(
+                RobustErrorHandler
+                    .Observation(
+                        code =
+                            BCI_W_BROADCAST_TRANSCRIPT_DROP,
+                        module =
+                            "kotlin.broadcast",
+                        severity =
+                            RobustErrorHandler
+                                .Severity.WARNING,
+                        message =
+                            "Broadcast publisher dropped " +
+                                (
+                                    broadcast.droppedTranscripts -
+                                        healthLastBroadcastDroppedTranscripts
+                                    ) +
+                                " transcript message(s)",
+                        fatal =
+                            false
+                    )
+            )
+
+            healthLastBroadcastDroppedTranscripts =
+                broadcast.droppedTranscripts
+        }
+
+        return observations
+    }
+
+    private fun recordImmediateFault(
+        code: String,
+        module: String,
+        severity: RobustErrorHandler.Severity,
+        message: String,
+        fatal: Boolean
+    ) {
+        robustErrorHandler
+            .completeCheck(
+                listOf(
+                    RobustErrorHandler
+                        .Observation(
+                            code =
+                                code,
+                            module =
+                                module,
+                            severity =
+                                severity,
+                            message =
+                                message,
+                            fatal =
+                                fatal
+                        )
+                )
+            )
+
+        lastError =
+            "$code • $message"
+    }
+
+    private fun failMonitoringSafely(
+        code: String,
+        message: String
+    ) {
+        lastError =
+            "$code • $message"
+
+        running =
+            false
+
+        robustErrorLoopRunning =
+            false
+
+        runCatching {
+            NativeAudioEngine
+                .stopCapture()
+        }
+
+        runCatching {
+            liveTranscription
+                .stop()
+        }
+
+        runCatching {
+            publisher
+                .stop()
+        }
+
+        if (
+            ::recorder.isInitialized &&
+            recorder.active
+        ) {
+            runCatching {
+                recorder.abort()
+            }
+        }
+
+        runCatching {
+            bluetoothRouter
+                .clear()
+        }
+
+        runCatching {
+            stopForeground(
+                STOP_FOREGROUND_REMOVE
+            )
+        }
     }
 
     private fun createNotificationChannel() {
@@ -1080,6 +1870,60 @@ class AudioMonitorService : Service() {
 
         const val INPUT_SOURCE_BLUETOOTH =
             "bluetooth"
+
+        private const val ROBUST_ERROR_CHECK_MS =
+            250L
+
+        private const val FIRST_PCM_FRAME_TIMEOUT_MS =
+            4_000L
+
+        private const val CAPTURE_STALL_MS =
+            1_500L
+
+        private const val BASELINE_STALL_MS =
+            3_000L
+
+        private const val BCI_E_MONITOR_START =
+            "BCI_E_MONITOR_START"
+
+        private const val BCI_E_CAPTURE_LOOP =
+            "BCI_E_CAPTURE_LOOP"
+
+        private const val BCI_E_AUDIO_INACTIVE =
+            "BCI_E_AUDIO_INACTIVE"
+
+        private const val BCI_E_NATIVE_PROBE =
+            "BCI_E_NATIVE_PROBE"
+
+        private const val BCI_E_SAMPLE_RATE =
+            "BCI_E_SAMPLE_RATE"
+
+        private const val BCI_E_CAPTURE_STALL =
+            "BCI_E_CAPTURE_STALL"
+
+        private const val BCI_E_BASELINE_STALL =
+            "BCI_E_BASELINE_STALL"
+
+        private const val BCI_E_LIVE_TRANSCRIPTION =
+            "BCI_E_LIVE_TRANSCRIPTION"
+
+        private const val BCI_E_BROADCAST =
+            "BCI_E_BROADCAST"
+
+        private const val BCI_E_ERROR_HANDLER =
+            "BCI_E_ERROR_HANDLER"
+
+        private const val BCI_W_AUDIO_XRUN =
+            "BCI_W_AUDIO_XRUN"
+
+        private const val BCI_W_NATIVE_RING_DROP =
+            "BCI_W_NATIVE_RING_DROP"
+
+        private const val BCI_W_BROADCAST_AUDIO_DROP =
+            "BCI_W_BROADCAST_AUDIO_DROP"
+
+        private const val BCI_W_BROADCAST_TRANSCRIPT_DROP =
+            "BCI_W_BROADCAST_TRANSCRIPT_DROP"
 
         private const val CHANNEL_ID =
             "bciwhisper_audio"

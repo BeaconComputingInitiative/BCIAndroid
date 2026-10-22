@@ -131,6 +131,10 @@ class MainActivity : Activity() {
     @Volatile
     private var heavyComputeOwner: String? = null
 
+    @Volatile
+    private var transcriptionPreloadStarted =
+        false
+
     private var currentScreen = Screen.MONITOR
 
     private val connection = object : ServiceConnection {
@@ -173,7 +177,6 @@ class MainActivity : Activity() {
         setContentView(buildShell())
         showScreen(Screen.MONITOR)
         maybeRequestMicrophonePermissionOnce()
-        preloadTranscriptionEngine()
     }
 
     override fun onStart() {
@@ -257,6 +260,19 @@ class MainActivity : Activity() {
     }
 
     private fun preloadTranscriptionEngine() {
+        synchronized(
+            this
+        ) {
+            if (
+                transcriptionPreloadStarted
+            ) {
+                return
+            }
+
+            transcriptionPreloadStarted =
+                true
+        }
+
         Thread({
             runCatching {
                 Process.setThreadPriority(
@@ -606,7 +622,7 @@ class MainActivity : Activity() {
 
         header.addView(
             TextView(this).apply {
-                text = "ANDROID • v6.0 • ALPHA 19"
+                text = "ANDROID • v6.0 • ALPHA 20"
                 textSize = 10f
                 setTextColor(muted)
                 typeface = uiTypeface
@@ -1769,6 +1785,8 @@ class MainActivity : Activity() {
     }
 
     private fun buildTranscriptsScreen(): ScrollView {
+        preloadTranscriptionEngine()
+
         val scroll = ScrollView(this).apply {
             setBackgroundColor(bg)
         }
@@ -2051,6 +2069,15 @@ class MainActivity : Activity() {
             when {
                 snapshot.lastError != null ->
                     "ERROR • ${snapshot.lastError}"
+
+                snapshot.rootErrorCode != null ->
+                    "ERROR • " +
+                        snapshot.rootErrorCode +
+                        " • " +
+                        (
+                            snapshot.rootErrorMessage
+                                ?: "runtime fault"
+                        )
 
                 !hasPermission ->
                     "MICROPHONE PERMISSION REQUIRED"

@@ -13,12 +13,14 @@ on:
       - "gateway/**"
       - "render.yaml"
       - "scripts/verify-module-contracts.py"
+      - "contracts/**"
       - ".github/workflows/build-gateway.yml"
   pull_request:
     paths:
       - "gateway/**"
       - "render.yaml"
       - "scripts/verify-module-contracts.py"
+      - "contracts/**"
       - ".github/workflows/build-gateway.yml"
 
 jobs:
@@ -56,7 +58,9 @@ jobs:
             gateway/test/smoke.sh \
             gateway/test/publish-transcript.ts \
             render.yaml \
-            scripts/verify-module-contracts.py
+            scripts/verify-module-contracts.py \
+            contracts/bci-core-v1.json \
+            contracts/BCI_CORE_CONTRACT_V1.md
 
       - name: Smoke-test gateway
         run: bash gateway/test/smoke.sh

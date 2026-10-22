@@ -17,6 +17,7 @@ on:
       - "gradle.properties"
       - ".gitmodules"
       - "scripts/verify-module-contracts.py"
+      - "contracts/**"
       - ".github/workflows/build-android.yml"
   pull_request:
     paths:
@@ -27,6 +28,7 @@ on:
       - "gradle.properties"
       - ".gitmodules"
       - "scripts/verify-module-contracts.py"
+      - "contracts/**"
       - ".github/workflows/build-android.yml"
 
 jobs:
@@ -103,6 +105,10 @@ jobs:
             app/src/main/java/org/beaconcomputinginitiative/bciwhisper/transcription/NativeTranscriptionEngine.kt \
             app/src/main/java/org/beaconcomputinginitiative/bciwhisper/transcription/LiveTranscriptionEngine.kt \
             app/src/main/java/org/beaconcomputinginitiative/bciwhisper/transcription/LiveTranscriptDeduplicator.kt \
+            app/src/main/java/org/beaconcomputinginitiative/bciwhisper/runtime/RobustErrorHandler.kt \
+            app/src/test/java/org/beaconcomputinginitiative/bciwhisper/runtime/RobustErrorHandlerTest.kt \
+            contracts/bci-core-v1.json \
+            contracts/BCI_CORE_CONTRACT_V1.md \
             app/src/main/java/org/beaconcomputinginitiative/bciwhisper/ui/Spectrum3DView.kt \
             app/src/main/cpp/whisper/native_engine.cpp \
             app/src/main/cpp/whisper/audio_engine.cpp \
@@ -132,6 +138,11 @@ jobs:
           grep -q "LiveTranscriptionEngine" app/src/main/java/org/beaconcomputinginitiative/bciwhisper/audio/AudioMonitorService.kt
           grep -q "submitTranscript" app/src/main/java/org/beaconcomputinginitiative/bciwhisper/broadcast/BroadcastPublisher.kt
           grep -q "transcribeLivePcm" app/src/main/java/org/beaconcomputinginitiative/bciwhisper/transcription/TranscriptionEngine.kt
+          grep -q "RobustErrorHandler" app/src/main/java/org/beaconcomputinginitiative/bciwhisper/audio/AudioMonitorService.kt
+          grep -q "private fun robustErrorLoop()" app/src/main/java/org/beaconcomputinginitiative/bciwhisper/audio/AudioMonitorService.kt
+          grep -q "BCI_E_CAPTURE_LOOP" app/src/main/java/org/beaconcomputinginitiative/bciwhisper/audio/AudioMonitorService.kt
+          grep -Fq '"contract"' contracts/bci-core-v1.json
+          grep -q "Robust error handling" contracts/BCI_CORE_CONTRACT_V1.md
 
       - name: Cross-module compatibility contracts
         run: python3 scripts/verify-module-contracts.py
@@ -223,33 +234,47 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          cp app/build/outputs/apk/debug/app-debug.apk             out/BCIWhisper-v6.0-Android-alpha19-debug.apk
+          cp app/build/outputs/apk/debug/app-debug.apk             out/BCIWhisper-v6.0-Android-alpha20-debug.apk
           (
             cd out
-            sha256sum BCIWhisper-v6.0-Android-alpha19-debug.apk               > BCIWhisper-v6.0-Android-alpha19-debug.apk.sha256
+            sha256sum BCIWhisper-v6.0-Android-alpha20-debug.apk               > BCIWhisper-v6.0-Android-alpha20-debug.apk.sha256
           )
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: BCIWhisper-Android-alpha19
+          name: BCIWhisper-Android-alpha20
           path: out/*
           if-no-files-found: error
           retention-days: 14
 
-      - name: Publish Alpha 19 GitHub release
+      - name: Publish Alpha 20 GitHub release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="android-v6.0-alpha19"
-          APK="out/BCIWhisper-v6.0-Android-alpha19-debug.apk"
-          HASH="out/BCIWhisper-v6.0-Android-alpha19-debug.apk.sha256"
+          TAG="android-v6.0-alpha20"
+          APK="out/BCIWhisper-v6.0-Android-alpha20-debug.apk"
+          HASH="out/BCIWhisper-v6.0-Android-alpha20-debug.apk.sha256"
 
           if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             gh release upload "$TAG" "$APK" "$HASH"               --clobber               --repo "${{ github.repository }}"
           else
-            gh release create "$TAG" "$APK" "$HASH"               --repo "${{ github.repository }}"               --target "${{ github.sha }}"               --title "BCIWhisper Android v6.0 Alpha 19"               --notes "BCIAndroid Alpha 19 cross-module compatibility build. Developer Seal: CJB-DEV-2026."
+            gh release create "$TAG" "$APK" "$HASH"               --repo "${{ github.repository }}"               --target "${{ github.sha }}"               --title "BCIWhisper Android v6.0 Alpha 20"               --notes "BCIAndroid Alpha 20 verbose core-contract and robust-error-handling build. Developer Seal: CJB-DEV-2026."
           fi
+
+          # Alpha 20 becomes the authoritative current release only after its
+          # APK and SHA assets exist successfully.
+          gh release edit "$TAG"             --latest             --repo "${{ github.repository }}"
+
+          # User-authorized release cleanup. Delete the previous three release
+          # objects after Alpha 20 is safely published. Tags are intentionally
+          # retained for source-history traceability.
+          for OLD_TAG in             android-v6.0-alpha19             android-v6.0-alpha18             android-v6.0-alpha17
+          do
+            if gh release view "$OLD_TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+              gh release delete "$OLD_TAG"                 --yes                 --repo "${{ github.repository }}"
+            fi
+          done
