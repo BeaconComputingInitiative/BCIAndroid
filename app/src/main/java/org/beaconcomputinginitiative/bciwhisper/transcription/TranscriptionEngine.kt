@@ -65,6 +65,236 @@ class TranscriptionEngine(
             )
     }
 
+    data class LiveSegment(
+        val speaker: Int,
+        val text: String,
+        val start10ms: Long,
+        val end10ms: Long
+    )
+
+    data class LiveResult(
+        val segments: List<LiveSegment>,
+        val speechDetected: Boolean,
+        val threadsUsed: Int,
+        val decodeMs: Long,
+        val qualityContrastDb: Double,
+        val qualityNoiseFloorDbfs: Double
+    )
+
+    /**
+     * Low-latency rolling transcription path for the public livestream.
+     *
+     * This path intentionally avoids the heavier offline reconstruction stage:
+     * live captions favor bounded latency, while saved recordings retain the
+     * full reconstruction + diarization pipeline.
+     */
+    fun transcribeLivePcm(
+        pcm: ShortArray,
+        sourceRate: Int,
+        resourceMode: ResourceMode =
+            ResourceMode.CAPTURE_CRITICAL
+    ): LiveResult {
+        require(
+            sourceRate >
+                0
+        ) {
+            "Live transcription sample rate must be positive"
+        }
+
+        if (
+            pcm.isEmpty()
+        ) {
+            return LiveResult(
+                segments =
+                    emptyList(),
+                speechDetected =
+                    false,
+                threadsUsed =
+                    0,
+                decodeMs =
+                    0L,
+                qualityContrastDb =
+                    0.0,
+                qualityNoiseFloorDbfs =
+                    -120.0
+            )
+        }
+
+        val audio16k =
+            NativeTranscriptionEngine
+                .resamplePcm16To16k(
+                    input =
+                        pcm,
+                    sourceRate =
+                        sourceRate
+                )
+
+        val quality =
+            NativeTranscriptionEngine
+                .quality(
+                    audio =
+                        audio16k,
+                    sampleRate =
+                        16_000
+                )
+
+        val speechDetected =
+            quality.speechLevelDbfs >=
+                LIVE_MIN_SPEECH_DBFS &&
+                quality.activeRatio >=
+                LIVE_MIN_ACTIVE_RATIO &&
+                quality.contrastDb >=
+                LIVE_MIN_CONTRAST_DB
+
+        if (!speechDetected) {
+            return LiveResult(
+                segments =
+                    emptyList(),
+                speechDetected =
+                    false,
+                threadsUsed =
+                    0,
+                decodeMs =
+                    0L,
+                qualityContrastDb =
+                    quality.contrastDb,
+                qualityNoiseFloorDbfs =
+                    quality.noiseFloorDbfs
+            )
+        }
+
+        val model =
+            ensureModel()
+
+        check(
+            NativeTranscriptionEngine
+                .warmModel(
+                    model.absolutePath
+                )
+        ) {
+            "whisper.cpp could not load the model"
+        }
+
+        runCatching {
+            Process.setThreadPriority(
+                Process.THREAD_PRIORITY_BACKGROUND
+            )
+        }
+
+        val threads =
+            threadBudget(
+                resourceMode
+            )
+
+        val decodeStart =
+            System.nanoTime()
+
+        val labeled =
+            synchronized(
+                nativeLock
+            ) {
+                val rc =
+                    NativeTranscriptionEngine
+                        .transcribe(
+                            audio16k,
+                            threads
+                        )
+
+                check(
+                    rc ==
+                        0
+                ) {
+                    "whisper.cpp live transcription failed: $rc"
+                }
+
+                val raw =
+                    buildList {
+                        val count =
+                            NativeTranscriptionEngine
+                                .segmentCount()
+
+                        for (
+                            index in
+                            0 until count
+                        ) {
+                            val text =
+                                NativeTranscriptionEngine
+                                    .segmentText(
+                                        index
+                                    )
+                                    .trim()
+
+                            if (
+                                text.isBlank()
+                            ) {
+                                continue
+                            }
+
+                            add(
+                                SpeakerDiarizer
+                                    .Segment(
+                                        text =
+                                            text,
+                                        start10ms =
+                                            NativeTranscriptionEngine
+                                                .segmentStart10ms(
+                                                    index
+                                                ),
+                                        end10ms =
+                                            NativeTranscriptionEngine
+                                                .segmentEnd10ms(
+                                                    index
+                                                )
+                                    )
+                            )
+                        }
+                    }
+
+                SpeakerDiarizer(
+                    sampleRate =
+                        16_000
+                )
+                    .label(
+                        audio =
+                            audio16k,
+                        segments =
+                            raw
+                    )
+            }
+
+        val decodeMs =
+            elapsedMs(
+                decodeStart
+            )
+
+        return LiveResult(
+            segments =
+                labeled.map {
+                        segment ->
+                    LiveSegment(
+                        speaker =
+                            segment.speaker,
+                        text =
+                            segment.text,
+                        start10ms =
+                            segment.start10ms,
+                        end10ms =
+                            segment.end10ms
+                    )
+                },
+            speechDetected =
+                true,
+            threadsUsed =
+                threads,
+            decodeMs =
+                decodeMs,
+            qualityContrastDb =
+                quality.contrastDb,
+            qualityNoiseFloorDbfs =
+                quality.noiseFloorDbfs
+        )
+    }
+
     fun transcribe(
         wavFile: File,
         resourceMode: ResourceMode
@@ -769,6 +999,15 @@ class TranscriptionEngine(
         private const val MODEL_COPY_BUFFER_BYTES =
             1024 *
                 1024
+
+        private const val LIVE_MIN_SPEECH_DBFS =
+            -52.0
+
+        private const val LIVE_MIN_ACTIVE_RATIO =
+            0.04
+
+        private const val LIVE_MIN_CONTRAST_DB =
+            2.0
 
         private val nativeLock =
             Any()
