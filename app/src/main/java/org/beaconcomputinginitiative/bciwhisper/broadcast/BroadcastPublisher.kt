@@ -249,15 +249,85 @@ class BroadcastPublisher {
                     )
                 }
 
-                override fun onMessage(webSocket: WebSocket, text: String) {
+                override fun onMessage(
+                    webSocket: WebSocket,
+                    text: String
+                ) {
+                    val body =
+                        runCatching {
+                            JSONObject(
+                                text
+                            )
+                        }
+                            .getOrNull()
+                            ?: return
+
                     if (
-                        text.contains("\"type\":\"hello_ack\"") ||
-                        (text.contains("\"type\"") && text.contains("hello_ack"))
+                        body.optString(
+                            "type"
+                        ) !=
+                        "hello_ack"
                     ) {
-                        retryAttempt = 0
-                        lastError = null
-                        state = State.LIVE
+                        return
                     }
+
+                    val protocol =
+                        body.optString(
+                            "protocol"
+                        )
+
+                    val streamId =
+                        body.optString(
+                            "streamId"
+                        )
+
+                    val inputCodec =
+                        body.optString(
+                            "inputCodec"
+                        )
+
+                    val outputCodec =
+                        body.optString(
+                            "outputCodec"
+                        )
+
+                    val compatible =
+                        protocol ==
+                            BroadcastConfig.PROTOCOL &&
+                            streamId ==
+                            BroadcastConfig.STREAM_ID &&
+                            inputCodec ==
+                            BroadcastConfig.INPUT_CODEC &&
+                            outputCodec ==
+                            BroadcastConfig.OUTPUT_CODEC
+
+                    if (!compatible) {
+                        lastError =
+                            "Gateway handshake contract mismatch: " +
+                                "protocol=$protocol, " +
+                                "stream=$streamId, " +
+                                "input=$inputCodec, " +
+                                "output=$outputCodec"
+
+                        state =
+                            State.ERROR
+
+                        webSocket.close(
+                            1008,
+                            "gateway_contract_mismatch"
+                        )
+
+                        return
+                    }
+
+                    retryAttempt =
+                        0
+
+                    lastError =
+                        null
+
+                    state =
+                        State.LIVE
                 }
 
                 override fun onFailure(

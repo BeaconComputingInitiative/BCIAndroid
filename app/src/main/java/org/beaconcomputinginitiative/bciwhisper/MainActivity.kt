@@ -606,7 +606,7 @@ class MainActivity : Activity() {
 
         header.addView(
             TextView(this).apply {
-                text = "ANDROID • v6.0 • ALPHA 18"
+                text = "ANDROID • v6.0 • ALPHA 19"
                 textSize = 10f
                 setTextColor(muted)
                 typeface = uiTypeface
