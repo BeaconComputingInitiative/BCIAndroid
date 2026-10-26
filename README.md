@@ -1,4 +1,16 @@
-# BCIAndroid — BCIWhisper for Android
+<!-- BEACON COMPUTING INITIATIVE | Developer Seal: CJB-DEV-2026 | Chance Joaquin Boone -->
+<!-- SHA-256: see docs/HYGIENE_SHA256SUMS -->
+
+# BCIAndroid
+
+## Current source and release — Alpha 20
+
+The default branch and published [Alpha 20 release](https://github.com/BeaconComputingInitiative/BCIAndroid/releases/tag/android-v6.0-alpha20) supersede the Alpha 16 overview retained below. The current source includes the native Oboe input engine (`app/src/main/cpp/whisper/audio_engine.cpp`), an OpenGL ES spectrum renderer (`Spectrum3DView.kt`), live-transcription modules, and module-contract/runtime error handling. This review confirms source presence, not physical-device acceptance.
+
+The earlier AudioRecord, Canvas and manual-only transcription descriptions below are historical implementation notes and must not be read as the complete Alpha 20 specification. See [repository findings and maintenance rules](docs/REPOSITORY_HYGIENE.md).
+
+## Historical overview and implementation notes
+
 
 BCIAndroid is the dedicated native Android repository for BCIWhisper. Android source, CI, signing, APK artifacts, and Android releases live here independently from the desktop BCIWhisper repository.
 
@@ -257,3 +269,4 @@ The Android interface now uses a dedicated responsiveness budget instead of slow
 - Waterfall history depth is reduced from 28 to 20 layers and advances at 18 Hz, lowering per-frame draw work while retaining spatial history.
 
 The real-time audio boundary remains independent of the GUI scheduler; these changes reduce main-thread work without moving DSP, capture, or transcription onto the UI thread.
+

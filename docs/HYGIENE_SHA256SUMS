@@ -1,0 +1,8 @@
+# BEACON COMPUTING INITIATIVE
+# Developer Seal: CJB-DEV-2026 | Chance Joaquin Boone
+# SHA-256 of each authored file; manifest excludes itself.
+8150d806c38c5d41c3c4a63725badbab1ad7bc9e72dd2d8dd6e2b7ec1cf81a69  .github/pull_request_template.md
+c2bbbd18699d46e80d8d8247232780ff39ad24ed2332973a3a27da3cd7ba9e22  .github/workflows/repository-hygiene.yml
+17c9242bc5039f0e35cc5a3db2a1dcf1e4022e572254e800859e80995e94786c  README.md
+0e69a6ef0eb687cae85df953aba1575c229eff71a6bb8e3f9e9fcb19ac27498c  docs/REPOSITORY_HYGIENE.md
+07b39178fdab265623c7af23757a3c9fa89948ee9ad6ab6ccc115320a3c6cf6e  tools/repository_hygiene.py
