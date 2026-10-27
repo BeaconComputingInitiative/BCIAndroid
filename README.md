@@ -1,259 +1,50 @@
-# BCIAndroid — BCIWhisper for Android
+<!-- BEACON COMPUTING INITIATIVE | Developer Seal: CJB-DEV-2026 | Chance Joaquin Boone -->
+<!-- SHA-256: see docs/HYGIENE_SHA256SUMS from the repository root -->
 
-BCIAndroid is the dedicated native Android repository for BCIWhisper. Android source, CI, signing, APK artifacts, and Android releases live here independently from the desktop BCIWhisper repository.
+# BCIAndroid
 
-## Current mobile baseline — Alpha 16
+Native Android audio monitoring, retained recordings, offline transcription and authenticated live publishing. This is the canonical mobile repository; the desktop project is [BCIWhisper](https://github.com/BeaconComputingInitiative/BCIWhisper).
 
-Workspaces:
+**Developer:** Chance Joaquin Boone · **Developer Seal:** CJB-DEV-2026  
+**Current source:** `6.0-android-alpha20` · ARM64 · Android 9 / API 28 minimum
 
-```text
-MONITOR | RECORDINGS | TRANSCRIPTS | MASTERING
-```
+## Download and status
 
-### Implemented
+[Alpha 20 debug APK and SHA-256](https://github.com/BeaconComputingInitiative/BCIAndroid/releases/tag/android-v6.0-alpha20)
 
-- native Kotlin / Android application
-- branded BCI launcher, splash, typography and UI
-- one-time microphone permission behavior
-- phone microphone and operator-selected Bluetooth headset microphone
-- Android AudioRecord hardware boundary
-- foreground microphone service
-- 44.1 kHz mono PCM16 capture
-- bounded 15-second circular capture ring
-- 60-second room baseline
-- baseline-relative RMS detection
-- spectral baseline profile
-- adaptive post-trigger spectral lock using the desktop lock constants:
-  - 12% / 92% occupied-energy quantiles
-  - 700 Hz minimum lock width
-  - 150 Hz lock margin
-  - 0.35 smoothing
-  - 500 Hz maximum update step
-  - 3 dB spectral-presence gate
-- two-block trigger confirmation
-- 5-second signal-loss release grace
-- 15-second retained-event rule
-- raw + isolated WAV preservation
-- app-private recordings library
-- native whisper.cpp offline transcription
-- bundled tiny.en model
-- manual, downstream transcription workflow
-- outbound authenticated WSS broadcast publisher
-- cellular / Wi-Fi network awareness
-- gateway PCM16 -> MP3 transcode path
-- offline STFT/Wiener reconstruction
-- harmonic spectral protection
-- non-destructive reconstructed and mastered WAV derivatives
-- conservative mobile clarity EQ and -1 dBFS output ceiling
+Alpha 20 is an experimental debug build. GitHub currently marks its release as a regular release; that label does not establish production or physical-device acceptance. Alpha 15 and 16 remain historical downloads. Alpha 17–19 have tags without published release entries.
 
-## Permission policy
+## Current architecture
 
-Runtime permissions are requested only when required:
+| Component | Ownership |
+| --- | --- |
+| C++ / Oboe | PCM16 capture callback and native ring; no Kotlin work on the callback |
+| Kotlin foreground service | Capture supervision, baseline, spectral lock, retained WAV recording and runtime health |
+| OpenGL ES 2 | Spectrum / waterfall rendering |
+| JNI / whisper.cpp | Persistent offline decoder and 16 kHz inference conversion |
+| Kotlin transcription workers | Manual transcription, rolling live captions and overlap deduplication |
+| `gateway/` | Bun / TypeScript WSS publisher, FFmpeg MP3 output and public player |
+| `contracts/` | Machine-readable and human-readable cross-language contracts |
 
-- `RECORD_AUDIO`: requested once on first launch.
-- `BLUETOOTH_CONNECT` on Android 12+: requested only when Bluetooth Mic is selected for the first time.
+The capture contract is 44.1 kHz mono PCM16. RAW audio remains separate from reconstructed/mastered derivatives. Recording retention requires 15 seconds of confirmed lock. Live operation is operator initiated and requires a publisher credential.
 
-If either permission is denied, BCIWhisper does not repeatedly prompt. Subsequent operator actions direct Android to the app-permission settings.
+## Build from source
 
-BCIWhisper does not request location, storage, contacts, camera, SMS, phone, Bluetooth scanning, or notification permission.
-
-## Signal chain
-
-```text
-MIC / INPUT
-    ↓
-AudioRecord hardware boundary
-    ↓
-capture ring
-    ↓
-room baseline + spectral profile
-    ↓
-RMS trigger + adaptive spectral lock
-    ↓
-retained event lifecycle
-    ↓
-RAW + isolated WAV
-    ├── whisper.cpp -> TRANSCRIPTS
-    ├── STFT/Wiener reconstruction
-    │       ↓
-    │   clarity mastering -> MASTERING
-    └── outbound WSS publisher -> Broadcast Gateway -> MP3 StreamPlayer
-```
-
-## Mastering status
-
-The reconstruction stage now carries the desktop algorithmic intent: STFT analysis, percentile noise estimation, Wiener-style subtraction, spectral floor, and local-peak/harmonic protection.
-
-Alpha 6 does **not** claim exact desktop mastering parity yet. The desktop release targets -14 LUFS and -1 dBTP. The mobile build currently uses deterministic RMS normalization with a -1 dBFS ceiling. EBU R128 gating and oversampled true-peak measurement remain validation items before production release.
-
-## Transcription
-
-The Android application embeds whisper.cpp as a pinned native ARM64 dependency and bundles `ggml-tiny.en.bin`. Transcription is manual and runs on a dedicated worker thread downstream of recording, so it cannot block capture, detection, recording, or broadcast.
-
-## Broadcast
-
-BCIAndroid now owns a dedicated live-gateway service under `gateway/`. Android Go Live makes an outbound authenticated `wss://` connection to that service. The gateway accepts only the configured Android publisher identity, transcodes the 44.1 kHz mono PCM16 uplink to MP3, exposes a listener stream and StreamPlayer, and keeps its own SQLite WAL event log.
-
-No inbound mobile-network port is required on the Android device, so carrier NAT / CGNAT remains compatible with the design.
-
-The gateway code is production-deployable, but it is not considered publicly live until it is deployed behind a real TLS endpoint and validated from a physical Android device over Wi-Fi and cellular data.
-
-## Build
-
-Requirements:
-
-- JDK 17
-- Android SDK 36
-- Android Build Tools 36.0.0
-- Android NDK 25.2.9519653
-- CMake 3.22.1
-- Gradle 9.5.0
+The repository has no Gradle wrapper. Use the toolchain pinned by [Android CI](.github/workflows/build-android.yml): JDK 17, Gradle 9.5.0, SDK 36, Build Tools 36.0.0, NDK 25.2.9519653 and CMake 3.22.1.
 
 ```bash
-gradle :app:assembleDebug
+git submodule update --init --recursive
+gradle :app:testDebugUnitTest :app:assembleDebug
 ```
 
-Output:
+Before assembling, provide the speech model as described in the CI model-download step (`app/src/main/assets/models/ggml-tiny.en.bin`). CI provisions it separately. Output: `app/build/outputs/apk/debug/app-debug.apk`. Release signing uses the separate signing workflow and environment-provided credentials.
 
-```text
-app/build/outputs/apk/debug/app-debug.apk
-```
+## Documentation and verification
 
-Package:
+- [Core contract](contracts/BCI_CORE_CONTRACT_V1.md)
+- [Gateway setup and tests](gateway/README.md)
+- [Historical Alpha 16 notes](docs/history/alpha16-guide.md)
+- [Commit audit and consolidation decisions](docs/PORTFOLIO_AUDIT.md)
+- [Maintenance rules](docs/REPOSITORY_HYGIENE.md)
 
-```text
-org.beaconcomputinginitiative.bciwhisper
-```
-
-## Remaining release-validation items
-
-- physical Android-device microphone lifecycle stress
-- Bluetooth route validation across representative headsets
-- real LTE/5G -> public gateway broadcast validation
-- whisper.cpp thermal / latency profiling on ARM64 hardware
-- EBU R128 integrated loudness and oversampled true-peak implementation
-- physical-device validation of the permanent release signing identity
-
-These are not represented as passed until they have real device or release-key evidence.
-
-
-## Animated 3D spectrum
-
-The Monitor workspace includes a native Kotlin/Canvas spectrum renderer.
-
-- 40 logarithmically grouped bands derived from the detector FFT.
-- attack/release interpolation for stable motion.
-- perspective grid plus depth-history waterfall for a defined 3D analyzer presentation.
-- cyan energy geometry with restrained maroon lock-region accents.
-- adaptive spectral-lock boundaries rendered directly over the spectrum.
-- Android Choreographer drives presentation frames; DSP remains on the capture/detector path.
-- visualization data is presentation-only and cannot block capture, recording, transcription, mastering, or broadcast.
-
-
-## Alpha 8 — baseline and locked-signal decibel telemetry
-
-The Monitor workspace now exposes decibel telemetry at both key stages:
-
-- During the initial 60-second room baseline, BCIWhisper shows a continuously updated 40th-percentile room-floor estimate in **dBFS**.
-- When the baseline completes, the final baseline room-floor value remains visible.
-- Each active locked signal gets its own running **average dBFS** value.
-- Each active lock also exposes the strongest observed **peak dBFS** value.
-- Lock SNR remains shown separately as a relative dB value above the room baseline.
-
-These values are deliberately labeled **dBFS**. Android microphone samples do not provide a trustworthy acoustic dB SPL value without per-device microphone calibration, so the app does not mislabel digital amplitude as SPL.
-
-
-## Alpha 9 — low-signal microphone optimization
-
-The Android capture boundary now probes and uses more of the selected input route while preserving transparent measurements:
-
-- Phone-microphone mode explicitly prefers the Android built-in input device when one is exposed by the device.
-- The app records the selected microphone's reported sample-rate and channel-count capabilities for operator visibility.
-- Bluetooth microphone mode keeps Android's communication-device / HFP route and now explicitly enters communication mode while that route is active, then restores the previous audio mode on exit.
-- The detector's weak-signal threshold is reduced to approximately **4 dB RMS SNR**, while retaining the independent **3 dB spectral-excess** requirement and the two-block confirmation gate.
-- BCIWhisper attempts to disable platform AGC, noise suppression, and acoustic echo cancellation on the AudioRecord session when Android exposes those effects. This prevents weak real signal from being silently suppressed and keeps dBFS telemetry meaningful.
-- The app does **not** digitally boost microphone samples before detection. Boosting would raise noise together with signal and corrupt the established baseline/SNR relationship.
-
-Hardware caveat: Bluetooth HFP microphone bandwidth, codec, gain, and DSP are controlled partly by the headset and Android vendor stack. BCIWhisper can select and optimize the route but cannot recover frequencies or signal below the hardware/codec noise floor.
-
-
-## Alpha 10 — identity-preserving spectral lock
-
-The lock now has two distinct stages instead of continuously chasing whichever signal is strongest.
-
-1. **Acquire** — a candidate must satisfy the weak-signal RMS threshold and spectral-excess threshold for two consecutive blocks.
-2. **Anchor** — once confirmed, the occupied frequency band and center frequency become the signal identity anchor.
-3. **Track** — subsequent blocks are accepted only when their frequency-band overlap and center-frequency proximity are sufficiently similar to the anchored signal.
-4. **Constrain** — accepted drift is smoothed and bounded so nearby unrelated sounds cannot drag the lock across the spectrum.
-5. **Isolate** — the isolated WAV now uses a fourth-order adaptive band-pass that follows the locked band with small guard margins, attenuating energy outside the specific tracked signal.
-6. **Release** — after the configured loss grace finishes the event, the detector explicitly releases the anchor before searching for the next signal.
-
-Raw WAV capture is still preserved unchanged. Only the isolated derivative follows the lock-aware moving filter.
-
-
-## Production signing
-
-The repository contains a manual signed-release workflow. It does not store or expose the signing key.
-
-Required GitHub Actions secrets:
-
-- `BCI_ANDROID_KEYSTORE_B64`
-- `BCI_ANDROID_KEYSTORE_PASSWORD`
-- `BCI_ANDROID_KEY_ALIAS`
-- `BCI_ANDROID_KEY_PASSWORD`
-
-The workflow materializes the keystore only inside the ephemeral GitHub Actions runner, builds `:app:assembleRelease`, verifies the APK with `apksigner --print-certs`, hashes it, and uploads the signed APK as a workflow artifact.
-
-The signing key itself must remain under operator custody. Losing that private key can prevent future updates from being accepted as the same application identity.
-
-
-## Repository boundary
-
-This repository owns the Android application lifecycle:
-
-```text
-BCIAndroid
-├── app/
-├── vendor/whisper.cpp
-├── gateway/
-├── Android CI
-├── gateway CI
-├── Android signing
-├── APK artifacts
-└── Android releases
-```
-
-The desktop BCIWhisper repository remains the authority for the desktop application, gateway, StreamPlayer, and the sealed desktop release history.
-
-
-## Alpha 11 — capture-first workload balancing
-
-BCIAndroid now explicitly prioritizes continuous operation over offline compute:
-
-- The AudioRecord capture/detection thread requests Android's audio scheduling priority on a best-effort basis.
-- whisper.cpp transcription runs on a low-priority worker and never on the capture thread.
-- Whisper thread count is resource-aware:
-  - **1 thread** while a retained signal is being recorded or a live broadcast is active.
-  - **1–2 threads** while ordinary microphone monitoring is active, depending on CPU core count.
-  - Up to **half the available CPU cores, capped at 4**, when the audio boundary is idle.
-- Transcription and mastering share a single heavy-compute lane so they cannot saturate CPU simultaneously.
-- Monitoring, signal locking, event recording, spectrum telemetry and broadcast remain independent from that heavy-compute lane.
-- The tiny.en model remains the default to constrain memory and thermals on mobile hardware.
-
-The scheduler is deliberately capture-first: transcription may take longer while BCIWhisper is actively monitoring or broadcasting, but the real-time microphone path keeps CPU headroom.
-
-
-## Alpha 16 — responsive GUI scheduling
-
-The Android interface now uses a dedicated responsiveness budget instead of slowing the entire UI during transcription:
-
-- Monitor telemetry refreshes every **100 ms** even while transcription or mastering is active.
-- Network capability queries are cached and refreshed once per second instead of being repeated on every UI tick.
-- Repeated TextView, button-state, and progress updates are skipped when the displayed value has not changed.
-- The monitor reuses the already-fetched audio snapshot when updating microphone source controls rather than requesting another snapshot.
-- The 3D spectrum no longer suspends during transcription. It renders at **30 FPS normally** and **20 FPS during heavy compute**, keeping motion live while protecting capture/transcription headroom.
-- Spectrum shaders and waterfall paths are cached instead of allocated every frame.
-- The expensive software blur rendering path has been removed so Android can use the normal hardware-accelerated view pipeline.
-- Waterfall history depth is reduced from 28 to 20 layers and advances at 18 Hz, lowering per-frame draw work while retaining spatial history.
-
-The real-time audio boundary remains independent of the GUI scheduler; these changes reduce main-thread work without moving DSP, capture, or transcription onto the UI thread.
+Physical microphone/Bluetooth lifecycle, mobile-network streaming, thermal behavior and signing identity still need device-level evidence. Mobile mastering does not establish desktop -14 LUFS / -1 dBTP parity. Release if and only if the exact source revision passes its documented acceptance gates.
